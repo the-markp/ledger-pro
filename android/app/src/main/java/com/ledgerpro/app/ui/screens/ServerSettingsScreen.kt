@@ -90,13 +90,38 @@ fun ServerSettingsScreen(
             ) {
                 OutlinedButton(
                     onClick = {
+                        serverUrl = "http://10.0.2.2:8001/api/"
+                        ApiClient.updateServerUrl(context, serverUrl)
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text("Docker (10.0.2.2:8001)", fontSize = 11.sp)
+                }
+                OutlinedButton(
+                    onClick = {
                         serverUrl = "http://10.0.2.2:3000/api/"
                         ApiClient.updateServerUrl(context, serverUrl)
                     },
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(6.dp)
                 ) {
-                    Text("Emulator (10.0.2.2)", fontSize = 11.sp)
+                    Text("Dev (10.0.2.2:3000)", fontSize = 11.sp)
+                }
+            }
+            Row(
+                horizontalArrangement = Arrangement.spacedBy(8.dp),
+                modifier = Modifier.fillMaxWidth()
+            ) {
+                OutlinedButton(
+                    onClick = {
+                        serverUrl = "http://localhost:8001/api/"
+                        ApiClient.updateServerUrl(context, serverUrl)
+                    },
+                    modifier = Modifier.weight(1f),
+                    shape = RoundedCornerShape(6.dp)
+                ) {
+                    Text("Localhost:8001", fontSize = 11.sp)
                 }
                 OutlinedButton(
                     onClick = {
@@ -106,7 +131,7 @@ fun ServerSettingsScreen(
                     modifier = Modifier.weight(1f),
                     shape = RoundedCornerShape(6.dp)
                 ) {
-                    Text("Localhost", fontSize = 11.sp)
+                    Text("Localhost:3000", fontSize = 11.sp)
                 }
             }
 

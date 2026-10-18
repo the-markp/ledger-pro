@@ -30,6 +30,8 @@ fun DashboardScreen(
     transactions: List<Transaction>,
     isLoading: Boolean,
     onRefresh: () -> Unit,
+    onLogout: () -> Unit = {},
+    onOpenSettings: () -> Unit = {},
     onSelectTransaction: (Transaction) -> Unit,
     onNewTransaction: () -> Unit,
     onRecordPayment: (Transaction) -> Unit
@@ -88,8 +90,16 @@ fun DashboardScreen(
                             color = AccentCyan
                         )
                     }
-                    IconButton(onClick = onRefresh) {
-                        Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = TextSecondary)
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        IconButton(onClick = onRefresh) {
+                            Icon(Icons.Default.Refresh, contentDescription = "Refresh", tint = TextSecondary)
+                        }
+                        IconButton(onClick = onOpenSettings) {
+                            Icon(Icons.Default.Settings, contentDescription = "Server Settings", tint = TextSecondary)
+                        }
+                        IconButton(onClick = onLogout) {
+                            Icon(Icons.Default.ExitToApp, contentDescription = "Sign Out", tint = StatusOverdueText)
+                        }
                     }
                 }
             }

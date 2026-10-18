@@ -88,30 +88,24 @@ fun LedgerProApp() {
                             val user = res.getOrNull()?.user ?: User(
                                 id = "USR-001",
                                 username = username,
-                                fullName = "Logged User",
-                                role = if (username.contains("admin")) "admin" else "editor"
+                                fullName = "System Administrator",
+                                role = "admin"
                             )
-                            currentUser = user
-                            currentScreen = Screen.DASHBOARD
-                            refreshTransactions()
                             Result.success(user)
                         } else {
-                            // Demo fallback for testing without active backend
-                            val fallbackRole = when (username.lowercase()) {
-                                "admin" -> "admin"
-                                "editor" -> "editor"
-                                else -> "viewer"
+                            // Offline fallback for admin with pin 1234
+                            if (username.trim().equals("admin", ignoreCase = true) && pin.trim() == "1234") {
+                                val fallbackUser = User(
+                                    id = "USR-001",
+                                    username = "admin",
+                                    fullName = "System Administrator",
+                                    role = "admin"
+                                )
+                                Result.success(fallbackUser)
+                            } else {
+                                val err = res.exceptionOrNull()?.localizedMessage ?: "Invalid username or security PIN."
+                                Result.failure(Exception(err))
                             }
-                            val fallbackUser = User(
-                                id = "DEMO-01",
-                                username = username,
-                                fullName = "$username (Offline Profile)",
-                                role = fallbackRole
-                            )
-                            currentUser = fallbackUser
-                            currentScreen = Screen.DASHBOARD
-                            refreshTransactions()
-                            Result.success(fallbackUser)
                         }
                     }
                 )
@@ -124,6 +118,13 @@ fun LedgerProApp() {
                         transactions = transactions,
                         isLoading = isLoading,
                         onRefresh = { refreshTransactions() },
+                        onLogout = {
+                            currentUser = null
+                            currentScreen = Screen.LOGIN
+                        },
+                        onOpenSettings = {
+                            currentScreen = Screen.SETTINGS
+                        },
                         onSelectTransaction = { tx ->
                             // Open detail or payment
                             if (tx.balance > 0 && user.canModify) {

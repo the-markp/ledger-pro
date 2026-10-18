@@ -2,7 +2,6 @@ package com.ledgerpro.app.ui.screens
 
 import androidx.compose.foundation.background
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.material.icons.Icons
@@ -19,6 +18,7 @@ import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import com.ledgerpro.app.data.model.User
 import com.ledgerpro.app.ui.theme.*
+import kotlinx.coroutines.launch
 
 @Composable
 fun LoginScreen(
@@ -86,54 +86,42 @@ fun LoginScreen(
                 color = TextSecondary
             )
 
-            Spacer(modifier = Modifier.height(32.dp))
+            Spacer(modifier = Modifier.height(28.dp))
 
-            // Quick Demo User Selector Chips
-            Text(
-                text = "Quick Demo Logins (PIN: 1234)",
-                style = MaterialTheme.typography.labelSmall,
-                color = TextMuted
-            )
-            Spacer(modifier = Modifier.height(8.dp))
-            Row(
-                horizontalArrangement = Arrangement.spacedBy(8.dp),
+            // Notice that new user accounts are managed by admin
+            Surface(
+                color = DarkSurface,
+                shape = RoundedCornerShape(8.dp),
                 modifier = Modifier.fillMaxWidth()
             ) {
-                listOf(
-                    Triple("admin", "Admin", PrimaryBlue),
-                    Triple("editor", "Editor", AccentCyan),
-                    Triple("viewer", "Viewer", TextMuted)
-                ).forEach { (u, label, color) ->
-                    OutlinedButton(
-                        onClick = {
-                            username = u
-                            pin = "1234"
-                        },
-                        modifier = Modifier.weight(1f),
-                        colors = ButtonDefaults.outlinedButtonColors(
-                            containerColor = if (username == u) color.copy(alpha = 0.2f) else DarkSurface
-                        ),
-                        border = ButtonDefaults.outlinedButtonBorder.copy(
-                            brush = androidx.compose.ui.graphics.SolidColor(if (username == u) color else DarkBorder)
-                        ),
-                        shape = RoundedCornerShape(8.dp)
-                    ) {
-                        Text(
-                            text = label,
-                            fontSize = 12.sp,
-                            fontWeight = if (username == u) FontWeight.Bold else FontWeight.Normal,
-                            color = if (username == u) color else TextSecondary
-                        )
-                    }
+                Row(
+                    modifier = Modifier.padding(12.dp),
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Security,
+                        contentDescription = null,
+                        tint = AccentCyan,
+                        modifier = Modifier.size(18.dp)
+                    )
+                    Spacer(modifier = Modifier.width(8.dp))
+                    Text(
+                        text = "Sign in with your authorized username and security PIN.",
+                        fontSize = 12.sp,
+                        color = TextSecondary
+                    )
                 }
             }
 
-            Spacer(modifier = Modifier.height(24.dp))
+            Spacer(modifier = Modifier.height(20.dp))
 
             // Username input
             OutlinedTextField(
                 value = username,
-                onValueChange = { username = it },
+                onValueChange = {
+                    username = it
+                    errorMessage = null
+                },
                 label = { Text("Username") },
                 singleLine = true,
                 leadingIcon = {
@@ -156,8 +144,13 @@ fun LoginScreen(
             // PIN input
             OutlinedTextField(
                 value = pin,
-                onValueChange = { if (it.length <= 6) pin = it },
-                label = { Text("4-6 Digit PIN") },
+                onValueChange = {
+                    if (it.length <= 6) {
+                        pin = it
+                        errorMessage = null
+                    }
+                },
+                label = { Text("Security PIN (4-6 digits)") },
                 singleLine = true,
                 visualTransformation = PasswordVisualTransformation(),
                 keyboardOptions = KeyboardOptions(keyboardType = KeyboardType.NumberPassword),
@@ -178,11 +171,29 @@ fun LoginScreen(
 
             if (errorMessage != null) {
                 Spacer(modifier = Modifier.height(12.dp))
-                Text(
-                    text = errorMessage!!,
-                    color = StatusOverdueText,
-                    fontSize = 13.sp
-                )
+                Card(
+                    colors = CardDefaults.cardColors(containerColor = StatusOverdueBg),
+                    shape = RoundedCornerShape(8.dp),
+                    modifier = Modifier.fillMaxWidth()
+                ) {
+                    Row(
+                        modifier = Modifier.padding(10.dp),
+                        verticalAlignment = Alignment.CenterVertically
+                    ) {
+                        Icon(
+                            Icons.Default.ErrorOutline,
+                            contentDescription = null,
+                            tint = StatusOverdueText,
+                            modifier = Modifier.size(16.dp)
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = errorMessage!!,
+                            color = StatusOverdueText,
+                            fontSize = 12.sp
+                        )
+                    }
+                }
             }
 
             Spacer(modifier = Modifier.height(24.dp))
@@ -190,14 +201,22 @@ fun LoginScreen(
             // Submit Button
             Button(
                 onClick = {
-                    if (username.isBlank() || pin.length < 4) {
-                        errorMessage = "Please enter a valid username and 4-digit PIN."
+                    val cleanUsername = username.trim()
+                    val cleanPin = pin.trim()
+                    if (cleanUsername.isBlank() || cleanPin.length < 4) {
+                        errorMessage = "Please enter a valid username and 4-6 digit PIN."
                         return@Button
                     }
                     isLoading = true
                     errorMessage = null
-                    kotlinx.coroutines.GlobalScope.let {
-                        // handled via callback
+                    coroutineScope.launch {
+                        val result = onLoginAttempt(cleanUsername, cleanPin)
+                        isLoading = false
+                        if (result.isSuccess) {
+                            onLoginSuccess(result.getOrThrow())
+                        } else {
+                            errorMessage = result.exceptionOrNull()?.localizedMessage ?: "Invalid login credentials."
+                        }
                     }
                 },
                 modifier = Modifier
@@ -225,7 +244,7 @@ fun LoginScreen(
 
         // Bottom hint
         Text(
-            text = "Philippine Peso (₱) Currency Enabled · Backend Synced",
+            text = "Philippine Peso (₱) Currency Enabled · REST API Backend",
             style = MaterialTheme.typography.labelSmall,
             color = TextMuted,
             modifier = Modifier.align(Alignment.BottomCenter)
