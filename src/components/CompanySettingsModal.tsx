@@ -50,6 +50,12 @@ export const CompanySettingsModal: React.FC<CompanySettingsModalProps> = ({
   const [profile, setProfile] = useState<CompanyProfile>(companyProfile);
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  React.useEffect(() => {
+    if (isOpen) {
+      setProfile(companyProfile);
+    }
+  }, [isOpen, companyProfile]);
+
   if (!isOpen) return null;
 
   const handleLogoUpload = (e: React.ChangeEvent<HTMLInputElement>) => {

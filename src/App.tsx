@@ -247,6 +247,30 @@ export default function App() {
     }).catch(() => {});
   };
 
+  // Handler: Save company branding profile and sync to database backend
+  const handleSaveCompanyProfile = async (newProfile: CompanyProfile) => {
+    setCompanyProfile(newProfile);
+    try {
+      localStorage.setItem(COMPANY_STORAGE_KEY, JSON.stringify(newProfile));
+    } catch (e) {}
+
+    try {
+      const res = await fetch('/api/company', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(newProfile),
+      });
+      if (res.ok) {
+        const saved = await res.json();
+        if (saved && saved.companyName) {
+          setCompanyProfile(saved);
+        }
+      }
+    } catch (err) {
+      console.warn('Failed to sync company branding to backend:', err);
+    }
+  };
+
   // Handler: Save transaction (Add or Edit)
   const handleSaveTransaction = (savedTx: Transaction) => {
     setTransactions((prev) => {
@@ -391,6 +415,11 @@ export default function App() {
     }
     if (backupData.companyProfile) {
       setCompanyProfile(backupData.companyProfile);
+      fetch('/api/company', {
+        method: 'PUT',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(backupData.companyProfile),
+      }).catch(() => {});
     }
     if (backupData.users && Array.isArray(backupData.users) && backupData.users.length > 0) {
       setUsers(backupData.users);
@@ -549,7 +578,7 @@ export default function App() {
         isOpen={isCompanySettingsOpen}
         onClose={() => setIsCompanySettingsOpen(false)}
         companyProfile={companyProfile}
-        onSave={setCompanyProfile}
+        onSave={handleSaveCompanyProfile}
       />
 
       <UserManagementModal

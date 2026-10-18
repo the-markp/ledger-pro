@@ -14,6 +14,7 @@ const DEFAULT_COMPANY_PROFILE = {
   companyName: 'Vertex Engineering & Design Consultancy',
   tagline: 'Civil, Structural & MEPFS Engineering Services',
   logoIcon: 'building',
+  logoUrl: undefined,
   logoImage: undefined,
   accentColor: '#4f46e5',
   address: 'Suite 804, Cybergate Center, Ortigas Ave, Pasig City, Philippines',
@@ -87,11 +88,13 @@ function rowToUser(r) {
 // Helper: map DB row to CompanyProfile object
 function rowToCompany(r) {
   if (!r) return DEFAULT_COMPANY_PROFILE;
+  const logo = r.logo_image || r.logo_url || undefined;
   return {
     companyName: r.company_name || DEFAULT_COMPANY_PROFILE.companyName,
     tagline: r.tagline || DEFAULT_COMPANY_PROFILE.tagline,
     logoIcon: r.logo_icon || DEFAULT_COMPANY_PROFILE.logoIcon,
-    logoImage: r.logo_image || undefined,
+    logoUrl: logo,
+    logoImage: logo,
     accentColor: r.accent_color || DEFAULT_COMPANY_PROFILE.accentColor,
     address: r.address || DEFAULT_COMPANY_PROFILE.address,
     contactInfo: r.contact_info || DEFAULT_COMPANY_PROFILE.contactInfo,
@@ -792,9 +795,12 @@ class Database {
   }
 
   async updateCompany(newProfile) {
+    const logo = newProfile.logoUrl !== undefined ? newProfile.logoUrl : (newProfile.logoImage !== undefined ? newProfile.logoImage : this.data.companyProfile.logoUrl);
     const updated = {
       ...this.data.companyProfile,
-      ...newProfile
+      ...newProfile,
+      logoUrl: logo || undefined,
+      logoImage: logo || undefined
     };
 
     if (this.isPostgresConnected && this.pool) {
@@ -820,7 +826,7 @@ class Database {
             updated.companyName || DEFAULT_COMPANY_PROFILE.companyName,
             updated.tagline || '',
             updated.logoIcon || 'building',
-            updated.logoImage || null,
+            updated.logoUrl || updated.logoImage || null,
             updated.accentColor || '#4f46e5',
             updated.address || '',
             updated.contactInfo || '',
