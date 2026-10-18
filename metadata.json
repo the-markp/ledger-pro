@@ -1,0 +1,6 @@
+{
+  "name": "LedgerPro - Engineering Project Billing & Payment Tracker",
+  "description": "Comprehensive transaction ledger, payment status tracking, weekly and monthly spending reports, and instant export to Excel and PDF.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
