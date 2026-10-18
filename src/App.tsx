@@ -79,19 +79,9 @@ export default function App() {
     return INITIAL_USERS;
   });
 
-  // Authenticated User Session (defaults to null if not logged in)
-  const [currentUser, setCurrentUser] = useState<User | null>(() => {
-    try {
-      const saved = localStorage.getItem(CURRENT_USER_KEY);
-      if (saved) {
-        const parsed = JSON.parse(saved);
-        if (parsed && parsed.id && parsed.username && parsed.username !== 'editor' && parsed.username !== 'viewer') {
-          return parsed;
-        }
-      }
-    } catch (e) {}
-    return null;
-  });
+  // Authenticated User Session: ALWAYS starts as null so the Login page is the default page.
+  // No user can see any application data without logging in first.
+  const [currentUser, setCurrentUser] = useState<User | null>(null);
 
   // Active Navigation Tab
   const [currentTab, setCurrentTab] = useState<'transactions' | 'weekly' | 'monthly' | 'analytics'>('transactions');
@@ -186,16 +176,13 @@ export default function App() {
     } catch (e) {}
   }, [users]);
 
-  // Sync current user session to localStorage
+  // Clear any legacy persisted user session on mount so Login screen is always the entry point
   useEffect(() => {
     try {
-      if (currentUser) {
-        localStorage.setItem(CURRENT_USER_KEY, JSON.stringify(currentUser));
-      } else {
-        localStorage.removeItem(CURRENT_USER_KEY);
-      }
+      localStorage.removeItem(CURRENT_USER_KEY);
+      sessionStorage.removeItem(CURRENT_USER_KEY);
     } catch (e) {}
-  }, [currentUser]);
+  }, []);
 
   // Derived existing clients and projects for quick autocomplete
   const existingClients = useMemo(() => {
