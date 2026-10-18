@@ -14,10 +14,10 @@ services:
     volumes:
       # Named volume for database persistence across container restarts & rebuilds
       - postgres_data:/var/lib/postgresql/data
-    # Exposing on standard PostgreSQL port 5432.
-    # NOTE: Host machine runs an external database on port 3304; port 3304 is strictly untouched!
+    # Expose on host port 5433 (default) to avoid conflict with host machine's existing PostgreSQL on 5432.
+    # NOTE: Host machine runs existing Postgres on 5432 and another DB on 3304; both are untouched!
     ports:
-      - "5432:5432"
+      - "${POSTGRES_HOST_PORT:-5433}:5432"
     healthcheck:
       test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ledgerpro_user} -d ${POSTGRES_DB:-ledgerpro_db}"]
       interval: 5s

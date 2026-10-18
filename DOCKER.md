@@ -7,7 +7,8 @@ This application is containerized with a production Node 20 Alpine runtime, non-
 ## 🔒 Port Configuration & Host Database Isolation
 
 - **Application Port**: **8001** (`0.0.0.0:8001`)
-- **PostgreSQL Database Port**: **5432** (`0.0.0.0:5432` / internal Docker network)
+- **PostgreSQL Container Host Port**: **5433** (`0.0.0.0:5433` -> container `5432` / internal Docker network)
+- **Host PostgreSQL Instance (Port 5432)**: LedgerPro maps its database to host port **5433** (configurable via `POSTGRES_HOST_PORT`), so your host's existing PostgreSQL on port **5432** is completely untouched and free of port conflicts.
 - **Host Database Instance (Port 3304)**: LedgerPro does **NOT** bind, expose, or interfere with port **3304**. Any database instances running on your host machine on port `3304` remain completely untouched and conflict-free.
 
 ---

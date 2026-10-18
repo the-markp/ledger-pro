@@ -515,10 +515,10 @@ export const AndroidCompanionModal: React.FC<AndroidCompanionModalProps> = ({
                     <div className="p-3 rounded-lg bg-slate-900 border border-indigo-500/30">
                       <div className="flex items-center gap-2 text-indigo-400 font-semibold">
                         <Database className="w-4 h-4" />
-                        PostgreSQL 16 (Port 5432)
+                        PostgreSQL 16 (Host Port 5433)
                       </div>
                       <p className="mt-1 text-[11px] text-slate-400">
-                        Persistent volume <code className="text-slate-200 font-mono">postgres_data</code> stores transactions, users, and branding.
+                        Mapped to host port <code className="text-slate-200 font-mono">5433</code> (avoids conflict with host port 5432). Persistent volume <code className="text-slate-200 font-mono">postgres_data</code>.
                       </p>
                     </div>
 
