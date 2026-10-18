@@ -11,6 +11,7 @@ import { CompanySettingsModal } from './components/CompanySettingsModal';
 import { UserManagementModal } from './components/UserManagementModal';
 import { ChangePinModal } from './components/ChangePinModal';
 import { BackupRestoreModal } from './components/BackupRestoreModal';
+import { AndroidCompanionModal } from './components/AndroidCompanionModal';
 import { LoginScreen } from './components/LoginScreen';
 import { Transaction, Currency, PaymentStatus, CompanyProfile, DEFAULT_COMPANY_PROFILE } from './types/transaction';
 import { User, INITIAL_USERS, ROLE_PERMISSIONS } from './types/auth';
@@ -106,6 +107,7 @@ export default function App() {
   const [isUserManagementOpen, setIsUserManagementOpen] = useState(false);
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
   const [isBackupRestoreOpen, setIsBackupRestoreOpen] = useState(false);
+  const [isAndroidModalOpen, setIsAndroidModalOpen] = useState(false);
 
   // Sync transactions to localStorage
   useEffect(() => {
@@ -257,6 +259,39 @@ export default function App() {
     setIsPaymentModalOpen(true);
   };
 
+  // Handler: Mobile App simulation payment
+  const handleMobilePayment = (
+    transactionId: string,
+    amount: number,
+    method: string,
+    reference: string,
+    date: string,
+    remarks?: string
+  ) => {
+    setTransactions(prev =>
+      prev.map(t => {
+        if (t.id === transactionId) {
+          const newPaid = (t.amountPaid || 0) + amount;
+          const newBalance = Math.max(0, (t.totalBill || 0) - newPaid);
+          const newStatus: PaymentStatus =
+            newBalance === 0 ? 'Paid' : newPaid > 0 ? 'Partially Paid' : 'Pending';
+          return {
+            ...t,
+            amountPaid: newPaid,
+            balance: newBalance,
+            paymentStatus: newStatus,
+            paymentDate: date,
+            paymentMethod: method,
+            paymentReference: reference,
+            remarks: remarks ? `${t.remarks ? t.remarks + ' | ' : ''}${remarks}` : t.remarks,
+            updatedAt: new Date().toISOString(),
+          };
+        }
+        return t;
+      })
+    );
+  };
+
   // Handler: Reset sample data
   const handleResetSeedData = () => {
     if (window.confirm('Reset all transaction records to sample engineering project dataset?')) {
@@ -315,6 +350,7 @@ export default function App() {
         onOpenUserManagement={() => setIsUserManagementOpen(true)}
         onOpenChangePin={() => setIsChangePinOpen(true)}
         onOpenBackupRestore={() => setIsBackupRestoreOpen(true)}
+        onOpenAndroidCompanion={() => setIsAndroidModalOpen(true)}
         onLogout={handleLogout}
         onNewTransaction={() => {
           setEditingTransaction(null);
@@ -461,6 +497,21 @@ export default function App() {
         users={users}
         onRestoreData={handleRestoreData}
         onResetSeedData={handleResetSeedData}
+      />
+
+      <AndroidCompanionModal
+        isOpen={isAndroidModalOpen}
+        onClose={() => setIsAndroidModalOpen(false)}
+        transactions={transactions}
+        currentUser={currentUser}
+        companyProfile={companyProfile}
+        currency={currency}
+        onRecordPayment={handleMobilePayment}
+        onNewTransaction={() => {
+          setIsAndroidModalOpen(false);
+          setEditingTransaction(null);
+          setIsTxModalOpen(true);
+        }}
       />
     </div>
   );

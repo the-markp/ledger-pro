@@ -1,6 +1,13 @@
-# LedgerPro - Docker Deployment Guide (with Caddy Reverse Proxy)
+# LedgerPro - Docker Deployment Guide (with Caddy Reverse Proxy & Port 8001)
 
-This application is containerized with a production Node 20 Alpine runtime, non-root user security hardening (`appuser`), and a built-in healthcheck. It is designed to sit behind your existing **Caddy** reverse proxy.
+This application is containerized with a production Node 20 Alpine runtime, non-root user security hardening (`appuser`), full REST API support, and a built-in healthcheck. It is designed to sit behind your existing **Caddy** reverse proxy.
+
+---
+
+## 🔒 Port Configuration & Host Database Isolation
+
+- **Application Port**: **8001** (`0.0.0.0:8001`)
+- **Host Database Instance (Port 3304)**: LedgerPro does **NOT** bind, expose, or interfere with port **3304**. Any database instances running on your host machine on port `3304` remain completely untouched and conflict-free.
 
 ---
 
@@ -12,7 +19,7 @@ To build and start the container:
 docker compose up -d --build
 ```
 
-The container listens on port **3000** (`0.0.0.0:3000`).
+The container listens on host port **8001** (`0.0.0.0:8001`).
 
 To view logs or stop the container:
 ```bash
@@ -31,10 +38,10 @@ docker compose down
 # 1. Build the image
 docker build -t ledgerpro:latest .
 
-# 2. Run the container
+# 2. Run the container on port 8001 (isolated from host DB on 3304)
 docker run -d \
   --name ledgerpro-app \
-  -p 3000:3000 \
+  -p 8001:8001 \
   --restart unless-stopped \
   ledgerpro:latest
 ```
@@ -48,7 +55,7 @@ Add either of the following snippets to your existing `Caddyfile`:
 ### Scenario 1: Caddy running on the host machine
 ```caddy
 yourdomain.com {
-    reverse_proxy localhost:3000
+    reverse_proxy localhost:8001
 }
 ```
 
@@ -57,7 +64,7 @@ If Caddy and LedgerPro are connected to the same Docker network (e.g., `caddy_ne
 
 ```caddy
 yourdomain.com {
-    reverse_proxy ledgerpro-app:3000
+    reverse_proxy ledgerpro-app:8001
 }
 ```
 
@@ -65,14 +72,42 @@ yourdomain.com {
 
 ---
 
+## 📱 Android App Connection to Backend
+
+The LedgerPro Android companion application connects to this backend container:
+
+- **From Android Studio Emulator**:
+  ```text
+  http://10.0.2.2:8001/api/
+  ```
+- **From Physical Android Phone (Local WiFi)**:
+  ```text
+  http://<HOST_LOCAL_IP>:8001/api/
+  ```
+- **From Production (via Caddy with HTTPS)**:
+  ```text
+  https://yourdomain.com/api/
+  ```
+
+---
+
 ## 🩺 Container Health Check
 
-The container includes a built-in `/health` endpoint for monitoring and uptime probes:
+The container includes a built-in `/health` endpoint and `/api/status` endpoint:
 
 ```bash
-curl http://localhost:3000/health
+curl http://localhost:8001/health
 ```
 Response:
 ```json
-{"status":"ok","timestamp":"2026-10-17T17:15:00.000Z"}
+{"status":"ok","timestamp":"2026-10-18T08:00:00.000Z"}
+```
+
+And test the REST API status:
+```bash
+curl http://localhost:8001/api/status
+```
+Response:
+```json
+{"status":"online","app":"LedgerPro","version":"2.1.0","currency":"PHP"}
 ```

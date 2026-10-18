@@ -26,8 +26,9 @@ FROM node:20-alpine AS runner
 
 WORKDIR /app
 
+# Expose on port 8001 (isolated from host database on port 3304)
 ENV NODE_ENV=production \
-    PORT=3000 \
+    PORT=8001 \
     HOST=0.0.0.0
 
 # Install curl / wget for health checks
@@ -43,21 +44,22 @@ RUN npm install --omit=dev && npm cache clean --force
 # Copy built frontend assets from builder stage
 COPY --from=builder /app/dist ./dist
 
-# Copy server entrypoint
+# Copy backend files and server entrypoint
 COPY server.js ./
+COPY server ./server
 
-# Set ownership to unprivileged user
-RUN chown -R appuser:appgroup /app
+# Create data directory for JSON persistence with proper permissions
+RUN mkdir -p /app/data && chown -R appuser:appgroup /app
 
 # Switch to non-root user
 USER appuser
 
-# Expose container port
-EXPOSE 3000
+# Expose container port 8001
+EXPOSE 8001
 
-# Container healthcheck
+# Container healthcheck on port 8001
 HEALTHCHECK --interval=30s --timeout=5s --start-period=5s --retries=3 \
-  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:3000/health || exit 1
+  CMD wget --no-verbose --tries=1 --spider http://127.0.0.1:8001/health || exit 1
 
 # Start the Express server
 CMD ["node", "server.js"]

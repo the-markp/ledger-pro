@@ -17,6 +17,7 @@ import {
   Briefcase,
   Users,
   Database,
+  Smartphone,
   LogOut,
   KeyRound,
   ShieldCheck,
@@ -39,6 +40,7 @@ interface HeaderProps {
   onOpenUserManagement: () => void;
   onOpenChangePin: () => void;
   onOpenBackupRestore: () => void;
+  onOpenAndroidCompanion: () => void;
   onLogout: () => void;
   onNewTransaction: () => void;
   onOpenExportModal: () => void;
@@ -66,6 +68,7 @@ export const Header: React.FC<HeaderProps> = ({
   onOpenUserManagement,
   onOpenChangePin,
   onOpenBackupRestore,
+  onOpenAndroidCompanion,
   onLogout,
   onNewTransaction,
   onOpenExportModal,
@@ -220,6 +223,16 @@ export const Header: React.FC<HeaderProps> = ({
             >
               <Database className="w-3.5 h-3.5 text-cyan-400" />
               <span className="hidden sm:inline">Backup</span>
+            </button>
+
+            {/* Android Mobile App Companion */}
+            <button
+              onClick={onOpenAndroidCompanion}
+              className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-emerald-950/70 hover:bg-emerald-900/90 text-emerald-300 hover:text-emerald-100 rounded-lg border border-emerald-500/40 transition-colors shadow-xs"
+              title="Access LedgerPro Android App & Backend API (Port 8001)"
+            >
+              <Smartphone className="w-3.5 h-3.5 text-emerald-400" />
+              <span className="hidden sm:inline">Android App</span>
             </button>
 
             {/* Export (Available to all roles) */}

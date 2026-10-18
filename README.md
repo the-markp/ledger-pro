@@ -2,7 +2,14 @@
 
 **LedgerPro** is a comprehensive, production-grade billing ledger and financial tracking platform designed specifically for engineering consultancies, architectural studios, and multidisciplinary design firms.
 
-It streamlines transaction recording, payment status tracking, weekly and monthly spending analyses, and instant export to professional Excel (.xlsx) spreadsheets and PDF statements of account.
+It streamlines transaction recording, payment status tracking in Philippine Peso (₱), weekly and monthly spending analyses, and instant export to professional Excel (.xlsx) spreadsheets and PDF statements of account. In addition to full web access, it includes a complete **native Android companion application** and a **containerized backend running on port 8001** behind Caddy.
+
+---
+
+## 🔒 Port Configuration & Host Database Isolation
+
+- **Application Port**: **8001** (`0.0.0.0:8001` on host, mapped to `8001` in container)
+- **Host Database Instance (Port 3304)**: LedgerPro does **NOT** bind, expose, or interfere with port **3304**. Any database instances running on your host machine on port `3304` remain completely untouched, isolated, and conflict-free.
 
 ---
 
@@ -11,30 +18,36 @@ It streamlines transaction recording, payment status tracking, weekly and monthl
 1. **Transaction Ledger & Calculation Engine**
    - **Full Discipline Tracking**: Dedicated scope allocation for **EE** (Electrical), **Pl** (Plumbing), **St** (Structural), **Arch** (Architectural), **ECE** (Electronics & Communications), **ME** (Mechanical), and **Others**.
    - **Automated Financial Formulas**: `Total Bill = Professional Bill + Print Cost`. Real-time balance calculations (`Balance = Total Bill - Amount Paid`).
-   - **Comprehensive Fields**: Date, Client, Project Name, Disciplines, Purpose/Milestone, Bill, Print Cost, Total Bill, Payment Status, Amount Paid, Balance, Payment Date, Payment Reference, and Remarks.
-   - **Payment Status Tracking**: Track records as `Paid`, `Partially Paid`, `Pending`, or `Overdue` with quick one-click payment settlement modals and batch status operations.
+   - **Payment Tracking**: Track records as `Paid`, `Partially Paid`, `Pending`, or `Overdue` with quick one-click payment settlement modals and batch status operations.
 
-2. **Weekly & Monthly Spending Reports**
-   - **Weekly Reports**: Groups transactions by calendar weeks (Monday–Sunday) with weekly billings, blueprint print expenditures, collection ratios, and expandable transaction details.
-   - **Monthly Reports**: Chronological breakdown by billing month with client spending rankings and engineering discipline cost allocations.
-   - **Analytics & Trends**: Visual metrics for collection efficiency, top-spending clients, and discipline workload demand.
+2. **Native Android Companion Application (`/android`)**
+   - Built with **Kotlin**, **Jetpack Compose**, and **Material 3**.
+   - Connects to the backend REST API on **port 8001**.
+   - Field payment recording with partial/full balance auto-calculation.
+   - Built-in connection testing, latency ping, and dynamic server IP switching (Emulator `10.0.2.2:8001`, Local LAN WiFi, or Caddy HTTPS domain).
+   - In-app interactive simulator in the web dashboard for instant browser testing.
 
-3. **Multi-Format Accounting Export**
+3. **Backend REST API (`server.js` on Port 8001)**
+   - Persistent JSON store (`/data/database.json`) storing transactions, company branding, and user accounts.
+   - CORS enabled for Android app and reverse proxy access.
+   - Endpoints for auth, transactions, payments, company profile, and backups.
+
+4. **Multi-Format Accounting Export**
    - **Excel (.xlsx)**: Formatted workbooks with automated column widths, currency values, grand total summary formulas, and client breakdown sheets.
    - **PDF Reports**: Clean landscape ledger tables and branded single **Statement of Account / Billing Invoices** with official signature blocks.
-   - **Clean Currency Formatting**: Philippine Peso (`PHP ₱`) currency representation formatted to prevent `+/-` or `±` encoding glitches in PDF viewers.
+   - **Clean Currency Formatting**: Philippine Peso (`PHP ₱`) currency representation formatted without `+/-` or `±` encoding glitches in PDF viewers.
 
-4. **Multi-Company Branding & Custom Logo**
+5. **Multi-Company Branding & Custom Logo**
    - Customize company name, tagline, business address, contact numbers, TIN, and authorized signatory details.
    - Upload custom PNG/JPEG company logos or select preset engineering icons and brand accent colors.
 
-5. **Role-Based Access Control (RBAC) & Self-Nominated PINs**
+6. **Role-Based Access Control (RBAC) & Self-Nominated PINs**
    - **Admin**: Full administrative authority — manage transactions, edit company branding, manage user accounts, change roles, and perform backups/restores.
    - **Editor**: Operational authority — record new transactions, edit project scopes, update payment statuses, and export accounting reports.
    - **Viewer**: Read-only access — view the transaction ledger, browse weekly/monthly spending reports, and export documents.
-   - **Self-Nominated PIN**: Secure 4–6 digit user-defined PIN for fast, frictionless authentication without external server dependencies.
+   - **Self-Nominated PIN**: Secure 4–6 digit user-defined PIN for fast, frictionless authentication.
 
-6. **Comprehensive Backup & Restore**
+7. **Comprehensive Backup & Restore**
    - Export full JSON database backups including transaction history, company profiles, and user accounts.
    - Restore backups with a validation preview card and choose between **Clean Replace** or **Merge** strategies.
 
@@ -56,131 +69,120 @@ When first launching the application, you can sign in using any of the default a
 
 ## 🚀 Deployment Instructions
 
-### 1. Docker Compose (Recommended)
+### 1. Docker Compose (Port 8001)
 
-The app is packaged in a lightweight, multi-stage Docker container based on Node 20 Alpine with an unprivileged system user (`appuser`) and an automatic health check.
+The application includes a `docker-compose.yml` configured to expose port **8001** (avoiding host database port 3304):
 
 ```bash
-# Clone or navigate to the project directory
-cd /path/to/ledgerpro
-
-# Build and start container in detached mode
 docker compose up -d --build
 ```
 
-Access the application at: **http://localhost:3000**
-
-To monitor logs or stop the container:
+To view logs or stop the service:
 ```bash
-# View live application logs
 docker compose logs -f
-
-# Stop and remove containers
 docker compose down
 ```
-
----
 
 ### 2. Standard Docker CLI
 
 ```bash
-# 1. Build the container image
+# 1. Build the production image
 docker build -t ledgerpro:latest .
 
-# 2. Run container on port 3000
+# 2. Run the container on port 8001
 docker run -d \
   --name ledgerpro-app \
-  -p 3000:3000 \
+  -p 8001:8001 \
   --restart unless-stopped \
   ledgerpro:latest
 ```
 
 ---
 
-### 3. Caddy Reverse Proxy Configuration
+## 🔒 Caddy Reverse Proxy Configuration
 
-If you have **Caddy** already running on your server, simply point your domain or subdomain to port `3000`. Caddy will automatically manage TLS certificates and proxy traffic to LedgerPro.
+Add either of the following configurations to your `Caddyfile`:
 
-#### Scenario A: Caddy running on the Host Machine
-Add the following block to your `/etc/caddy/Caddyfile`:
-
+### Scenario A: Caddy on the Host Machine
 ```caddy
-billing.yourdomain.com {
-    reverse_proxy localhost:3000
+ledger.yourdomain.com {
+    reverse_proxy localhost:8001
 }
 ```
 
-Then reload Caddy:
-```bash
-sudo systemctl reload caddy
-# or
-caddy reload --config /etc/caddy/Caddyfile
-```
-
-#### Scenario B: Caddy in a Docker Network
-If Caddy runs inside Docker, attach both containers to a shared Docker bridge network (e.g. `caddy_net`):
-
+### Scenario B: Caddy in a Docker Network
+If Caddy and LedgerPro share a Docker network (e.g. `caddy_net`):
 ```caddy
-billing.yourdomain.com {
-    reverse_proxy ledgerpro-app:3000
+ledger.yourdomain.com {
+    reverse_proxy ledgerpro-app:8001
 }
 ```
 
+Caddy handles automatic HTTPS certificate issuance and renewal via Let's Encrypt / ZeroSSL.
+
 ---
 
-### 4. Local Development (Node.js)
+## 📱 Android Application Setup (`/android`)
 
+The Android application is located in the `android/` directory.
+
+### Quick Start with Android Studio
+1. Open Android Studio and choose **Open**, selecting the `android/` directory.
+2. Gradle sync will resolve all dependencies (Jetpack Compose, Retrofit 2, OkHttp).
+3. Connect your Android phone via USB (with Developer Mode & USB Debugging enabled) or start an Android Virtual Device (AVD).
+
+### Connecting to the Backend
+Inside the Android app:
+- **In Emulator**: Set Server URL to `http://10.0.2.2:8001/api/`
+- **On Physical Phone (WiFi)**: Set Server URL to `http://<YOUR_COMPUTER_IP>:8001/api/`
+- **In Production**: Set Server URL to `https://ledger.yourdomain.com/api/`
+- Tap **Test Connection & Ping API** to verify the green indicator.
+
+### Building APK from Command Line
 ```bash
-# Install dependencies
-npm install
+cd android
+./gradlew assembleDebug
+# Generated APK: android/app/build/outputs/apk/debug/app-debug.apk
 
-# Start local Vite development server
-npm run dev
-# Running on http://localhost:3000
-
-# Typecheck and lint codebase
-npm run lint
-
-# Compile production bundle
-npm run build
+# Install to connected device via ADB
+adb install app/build/outputs/apk/debug/app-debug.apk
 ```
 
 ---
 
-## 💾 Backup & Restore Procedure
+## 🌐 Backend REST API Reference (Port 8001)
 
-### How to Create a Backup
-
-1. Log in with an **Admin** or **Editor** account.
-2. Click the **Backup** button in the top navigation header (or the **Backup & Restore** link in the footer).
-3. Under the **Export System Backup** section:
-   - Check **Include Company Branding & Signatories** (saves logo, company name, address, and TIN).
-   - Check **Include User Accounts & Roles** (saves registered usernames and PINs).
-4. Click **Download Full JSON Backup**.
-5. A timestamped JSON file (e.g., `LedgerPro_Backup_Apex_Consulting_2026-10-18.json`) will be downloaded to your local device. Store this file in a secure location or offline storage.
-
-### How to Restore from a Backup
-
-1. Open the **Backup & Restore** modal from the header.
-2. In the **Restore Database from File** section, click **Select JSON Backup File** and upload your previously saved `.json` file.
-3. Review the **Backup File Verified** preview card, which shows:
-   - Total transaction records
-   - Registered users included
-   - Company branding name and export timestamp
-4. Select your desired restore strategy:
-   - **Replace existing ledger (Clean overwrite)**: Clears current transactions and replaces them with the backup archive.
-   - **Merge with existing records**: Adds any new records from the file while updating existing records that share matching IDs.
-5. Click **Confirm & Restore Now**. The system will validate and apply the records immediately.
-
-### Sample Data Reset
-
-To reset the database to the initial set of engineering project samples (useful for demonstrations or testing):
-- Open **Backup & Restore** and click **Reset Sample Data** at the bottom, or click the circular reset icon in the header bar.
+| Method | Endpoint | Description |
+| :--- | :--- | :--- |
+| `GET` | `/health` | Container health probe |
+| `GET` | `/api/status` | API status, version, and statistics |
+| `POST` | `/api/auth/login` | Authenticate with username & PIN |
+| `GET` | `/api/transactions` | List project billings (`?status=&search=`) |
+| `POST` | `/api/transactions` | Create new billing |
+| `PUT` | `/api/transactions/:id` | Update transaction |
+| `DELETE` | `/api/transactions/:id` | Delete transaction |
+| `PATCH` | `/api/transactions/:id/payment` | Record payment in Philippine Peso |
+| `GET` | `/api/company` | Get company branding profile |
+| `PUT` | `/api/company` | Update company branding profile |
+| `GET` | `/api/users` | List registered user profiles |
+| `GET` | `/api/backup` | Download complete JSON backup |
+| `POST` | `/api/restore` | Restore from JSON backup |
 
 ---
 
-## 🛡️ Security Hardening
+## 💾 Backup and Restore Procedures
 
-- **Non-Root Execution**: The production Docker container executes under user `appuser` (UID 1000) rather than `root`.
-- **Built-in Health Checks**: Built-in `/health` endpoint returning HTTP 200 JSON status.
-- **Client-Side Data Ownership**: All transactions and settings remain stored on your host environment with zero third-party cloud data leakage.
+### 1. Generating a Backup
+1. Click the **Backup** button in the header (or navigate to the footer link).
+2. Review the summary of active transactions, company profile, and user accounts.
+3. Click **Download Backup (.json)**. The file will be named `ledgerpro-backup-YYYY-MM-DD.json`.
+4. Store the file in your company's secure backup repository (e.g. encrypted cloud drive).
+
+### 2. Restoring a Backup
+1. Click the **Backup** button in the header.
+2. Click **Select Backup File (.json)** and choose your previously exported `.json` file.
+3. The modal displays a preview showing the number of transactions and company branding inside the backup file.
+4. Choose your restore mode:
+   - **Clean Replace**: Overwrites existing records with the backup dataset.
+   - **Merge**: Appends new records while updating matching transaction IDs.
+5. Confirm the action to restore the system state.
