@@ -591,11 +591,12 @@ class Database {
   async getUsers() {
     if (this.isPostgresConnected && this.pool) {
       try {
-        const res = await this.pool.query('SELECT id, username, full_name, role, is_active, created_at, last_login_at FROM users ORDER BY created_at ASC');
+        const res = await this.pool.query('SELECT id, username, full_name, pin, role, is_active, created_at, last_login_at FROM users ORDER BY created_at ASC');
         return res.rows.map(u => ({
           id: u.id,
           username: u.username,
           fullName: u.full_name,
+          pin: u.pin,
           role: u.role,
           isActive: u.is_active,
           createdAt: u.created_at ? new Date(u.created_at).toISOString() : undefined,
@@ -610,6 +611,7 @@ class Database {
       id: u.id,
       username: u.username,
       fullName: u.fullName,
+      pin: u.pin,
       role: u.role,
       isActive: u.isActive,
       createdAt: u.createdAt,

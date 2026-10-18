@@ -132,10 +132,13 @@ export default function App() {
         const usrRes = await fetch('/api/users');
         if (usrRes.ok) {
           const usrData = await usrRes.json();
-          if (isMounted && Array.isArray(usrData) && usrData.length > 0) {
-            const cleanUsers = usrData.filter((u: any) => u.username !== 'editor' && u.username !== 'viewer');
-            setUsers(cleanUsers.length > 0 ? cleanUsers : INITIAL_USERS);
-          }
+          const cleanUsers = usrData
+            .filter((u: any) => u.username !== 'editor' && u.username !== 'viewer')
+            .map((u: any) => ({
+              ...u,
+              pin: u.pin ? String(u.pin).trim() : (u.username === 'admin' ? '1234' : '1234')
+            }));
+          setUsers(cleanUsers.length > 0 ? cleanUsers : INITIAL_USERS);
         }
       } catch (e) {}
     };
@@ -204,12 +207,13 @@ export default function App() {
     setCurrentUser(null);
   };
 
-  const handleRegisterUser = (newUser: User) => {
-    setUsers((prev) => [...prev, newUser]);
-  };
-
   const handleAddUser = (newUser: User) => {
     setUsers((prev) => [...prev, newUser]);
+    fetch('/api/users', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(newUser),
+    }).catch(() => {});
   };
 
   const handleUpdateUser = (updatedUser: User) => {
@@ -217,10 +221,18 @@ export default function App() {
     if (currentUser && currentUser.id === updatedUser.id) {
       setCurrentUser(updatedUser);
     }
+    fetch(`/api/users/${encodeURIComponent(updatedUser.id)}`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(updatedUser),
+    }).catch(() => {});
   };
 
   const handleDeleteUser = (userId: string) => {
     setUsers((prev) => prev.filter((u) => u.id !== userId));
+    fetch(`/api/users/${encodeURIComponent(userId)}`, {
+      method: 'DELETE',
+    }).catch(() => {});
   };
 
   const handleUpdatePin = (newPin: string) => {
@@ -228,6 +240,11 @@ export default function App() {
     const updatedUser: User = { ...currentUser, pin: newPin };
     setCurrentUser(updatedUser);
     setUsers((prev) => prev.map((u) => (u.id === currentUser.id ? updatedUser : u)));
+    fetch(`/api/users/${encodeURIComponent(currentUser.id)}/pin`, {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ newPin }),
+    }).catch(() => {});
   };
 
   // Handler: Save transaction (Add or Edit)
@@ -392,7 +409,6 @@ export default function App() {
         users={users}
         companyProfile={companyProfile}
         onLoginSuccess={handleLoginSuccess}
-        onRegisterUser={handleRegisterUser}
       />
     );
   }
