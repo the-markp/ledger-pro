@@ -24,14 +24,15 @@ const USERS_STORAGE_KEY = 'ledgerpro_registered_users';
 const CURRENT_USER_KEY = 'ledgerpro_authenticated_user';
 
 export default function App() {
-  // Initialize transactions from localStorage or seed
+  // Initialize transactions from localStorage or clean state
   const [transactions, setTransactions] = useState<Transaction[]>(() => {
     try {
       const saved = localStorage.getItem(STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+        if (Array.isArray(parsed)) {
+          const DEMO_IDS = ['TRX-2026-001', 'TRX-2026-002', 'TRX-2026-003', 'TRX-2026-004', 'TRX-2026-005'];
+          return parsed.filter((t: Transaction) => !DEMO_IDS.includes(t.id));
         }
       }
     } catch (e) {
@@ -63,33 +64,33 @@ export default function App() {
     return DEFAULT_COMPANY_PROFILE;
   });
 
-  // Registered Users (Admin, Editor, Viewer)
+  // Registered Users (Admin only, demo users removed)
   const [users, setUsers] = useState<User[]>(() => {
     try {
       const saved = localStorage.getItem(USERS_STORAGE_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
         if (Array.isArray(parsed) && parsed.length > 0) {
-          return parsed;
+          const nonDemo = parsed.filter((u: User) => u.username !== 'editor' && u.username !== 'viewer');
+          if (nonDemo.length > 0) return nonDemo;
         }
       }
     } catch (e) {}
     return INITIAL_USERS;
   });
 
-  // Authenticated User Session
+  // Authenticated User Session (defaults to null if not logged in)
   const [currentUser, setCurrentUser] = useState<User | null>(() => {
     try {
       const saved = localStorage.getItem(CURRENT_USER_KEY);
       if (saved) {
         const parsed = JSON.parse(saved);
-        if (parsed && parsed.id && parsed.username) {
+        if (parsed && parsed.id && parsed.username && parsed.username !== 'editor' && parsed.username !== 'viewer') {
           return parsed;
         }
       }
     } catch (e) {}
-    // Default to admin user for seamless initial onboarding experience
-    return INITIAL_USERS[0];
+    return null;
   });
 
   // Active Navigation Tab
@@ -108,6 +109,52 @@ export default function App() {
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
   const [isBackupRestoreOpen, setIsBackupRestoreOpen] = useState(false);
   const [isAndroidModalOpen, setIsAndroidModalOpen] = useState(false);
+
+  // Initial load: Fetch from PostgreSQL REST API backend if reachable, falling back gracefully to localStorage
+  useEffect(() => {
+    let isMounted = true;
+    const syncFromBackend = async () => {
+      try {
+        const res = await fetch('/api/transactions');
+        if (res.ok) {
+          const data = await res.json();
+          if (isMounted && Array.isArray(data)) {
+            const DEMO_IDS = ['TRX-2026-001', 'TRX-2026-002', 'TRX-2026-003', 'TRX-2026-004', 'TRX-2026-005'];
+            const clean = data.filter((t: any) => !DEMO_IDS.includes(t.id));
+            setTransactions(clean);
+          }
+        }
+      } catch (e) {
+        // Fallback silently to localStorage
+      }
+
+      try {
+        const compRes = await fetch('/api/company');
+        if (compRes.ok) {
+          const compData = await compRes.json();
+          if (isMounted && compData && compData.companyName) {
+            setCompanyProfile(compData);
+          }
+        }
+      } catch (e) {}
+
+      try {
+        const usrRes = await fetch('/api/users');
+        if (usrRes.ok) {
+          const usrData = await usrRes.json();
+          if (isMounted && Array.isArray(usrData) && usrData.length > 0) {
+            const cleanUsers = usrData.filter((u: any) => u.username !== 'editor' && u.username !== 'viewer');
+            setUsers(cleanUsers.length > 0 ? cleanUsers : INITIAL_USERS);
+          }
+        }
+      } catch (e) {}
+    };
+
+    syncFromBackend();
+    return () => {
+      isMounted = false;
+    };
+  }, []);
 
   // Sync transactions to localStorage
   useEffect(() => {
@@ -203,8 +250,20 @@ export default function App() {
       if (idx >= 0) {
         const updated = [...prev];
         updated[idx] = savedTx;
+        // Sync update to backend PostgreSQL
+        fetch(`/api/transactions/${encodeURIComponent(savedTx.id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(savedTx),
+        }).catch(() => {});
         return updated;
       }
+      // Sync creation to backend PostgreSQL
+      fetch('/api/transactions', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify(savedTx),
+      }).catch(() => {});
       return [savedTx, ...prev];
     });
   };
@@ -212,11 +271,15 @@ export default function App() {
   // Handler: Delete single transaction
   const handleDeleteTransaction = (id: string) => {
     setTransactions((prev) => prev.filter((t) => t.id !== id));
+    fetch(`/api/transactions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
   };
 
   // Handler: Delete multiple transactions
   const handleDeleteMultiple = (ids: string[]) => {
     setTransactions((prev) => prev.filter((t) => !ids.includes(t.id)));
+    ids.forEach((id) => {
+      fetch(`/api/transactions/${encodeURIComponent(id)}`, { method: 'DELETE' }).catch(() => {});
+    });
   };
 
   // Handler: Batch status update
@@ -268,6 +331,19 @@ export default function App() {
     date: string,
     remarks?: string
   ) => {
+    // Sync payment to backend PostgreSQL
+    fetch(`/api/transactions/${encodeURIComponent(transactionId)}/payment`, {
+      method: 'PATCH',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        amountPaid: amount,
+        paymentMethod: method,
+        paymentReference: reference,
+        paymentDate: date,
+        remarks,
+      }),
+    }).catch(() => {});
+
     setTransactions(prev =>
       prev.map(t => {
         if (t.id === transactionId) {
@@ -292,10 +368,11 @@ export default function App() {
     );
   };
 
-  // Handler: Reset sample data
+  // Handler: Reset / Clear Ledger Data
   const handleResetSeedData = () => {
-    if (window.confirm('Reset all transaction records to sample engineering project dataset?')) {
-      setTransactions(INITIAL_TRANSACTIONS);
+    if (window.confirm('Clear all transaction records and reset to a fresh ledger?')) {
+      fetch('/api/reset', { method: 'POST' }).catch(() => {});
+      setTransactions([]);
     }
   };
 

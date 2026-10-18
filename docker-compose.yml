@@ -1,4 +1,33 @@
 services:
+  # ============================================================================
+  # PostgreSQL 16 Relational Database Service (Data Persistence)
+  # ============================================================================
+  postgres:
+    image: postgres:16-alpine
+    container_name: ledgerpro-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: ${POSTGRES_DB:-ledgerpro_db}
+      POSTGRES_USER: ${POSTGRES_USER:-ledgerpro_user}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-ledgerpro_password}
+      PGDATA: /var/lib/postgresql/data/pgdata
+    volumes:
+      # Named volume for database persistence across container restarts & rebuilds
+      - postgres_data:/var/lib/postgresql/data
+    # Exposing on standard PostgreSQL port 5432.
+    # NOTE: Host machine runs an external database on port 3304; port 3304 is strictly untouched!
+    ports:
+      - "5432:5432"
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-ledgerpro_user} -d ${POSTGRES_DB:-ledgerpro_db}"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
+      start_period: 5s
+
+  # ============================================================================
+  # LedgerPro Web & Mobile Companion REST API Server
+  # ============================================================================
   ledgerpro:
     build:
       context: .
@@ -6,17 +35,30 @@ services:
     image: ledgerpro:latest
     container_name: ledgerpro-app
     restart: unless-stopped
-    # Exposing exclusively on port 8001
-    # Port 3304 is reserved for the host machine's external database instance and has zero conflict
+    depends_on:
+      postgres:
+        condition: service_healthy
+    # Application runs exclusively on port 8001 (isolated from host port 3304)
     ports:
       - "8001:8001"
     environment:
       - NODE_ENV=production
       - PORT=8001
       - HOST=0.0.0.0
+      - DATABASE_URL=postgres://${POSTGRES_USER:-ledgerpro_user}:${POSTGRES_PASSWORD:-ledgerpro_password}@postgres:5432/${POSTGRES_DB:-ledgerpro_db}
+      - PGHOST=postgres
+      - PGPORT=5432
+      - PGUSER=${POSTGRES_USER:-ledgerpro_user}
+      - PGPASSWORD=${POSTGRES_PASSWORD:-ledgerpro_password}
+      - PGDATABASE=${POSTGRES_DB:-ledgerpro_db}
     healthcheck:
       test: ["CMD", "wget", "--no-verbose", "--tries=1", "--spider", "http://127.0.0.1:8001/health"]
       interval: 30s
       timeout: 5s
       retries: 3
       start_period: 10s
+
+volumes:
+  # Persistent volume for PostgreSQL database storage
+  postgres_data:
+    name: ledgerpro_postgres_data

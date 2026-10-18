@@ -2,10 +2,14 @@
 # Multi-stage Dockerfile for LedgerPro Engineering Billing & Reporting Platform
 # ==============================================================================
 
-# Stage 1: Build the React + Vite frontend
+# Stage 1: Build the React + Vite frontend and prepare production dependencies
 FROM node:20-alpine AS builder
-
 WORKDIR /app
+
+# Configure npm for resilient network downloads with retries
+RUN npm config set fetch-retries 5 && \
+    npm config set fetch-retry-mintimeout 20000 && \
+    npm config set fetch-retry-maxtimeout 120000
 
 # Copy package descriptors
 COPY package*.json ./
@@ -19,11 +23,13 @@ COPY . .
 # Build production bundle to /app/dist
 RUN npm run build
 
+# Prune devDependencies in builder so node_modules only contains production dependencies
+RUN npm prune --omit=dev && npm cache clean --force
+
 # ==============================================================================
 # Stage 2: Production runtime environment
 # ==============================================================================
 FROM node:20-alpine AS runner
-
 WORKDIR /app
 
 # Expose on port 8001 (isolated from host database on port 3304)
@@ -31,15 +37,17 @@ ENV NODE_ENV=production \
     PORT=8001 \
     HOST=0.0.0.0
 
-# Install curl / wget for health checks
+# Install wget for container health checks
 RUN apk add --no-cache wget
 
 # Create unprivileged application user for security hardening
 RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
-# Copy package files and install only production dependencies
+# Copy package files
 COPY package*.json ./
-RUN npm install --omit=dev --legacy-peer-deps && npm cache clean --force
+
+# Copy prepared production node_modules from builder (avoids redundant network install)
+COPY --from=builder /app/node_modules ./node_modules
 
 # Copy built frontend assets from builder stage
 COPY --from=builder /app/dist ./dist

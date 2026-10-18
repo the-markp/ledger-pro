@@ -8,7 +8,6 @@ import {
   EyeOff, 
   ArrowRight, 
   ShieldCheck, 
-  UserCheck, 
   Compass, 
   HardHat, 
   Cpu, 
@@ -82,14 +81,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
     }
 
     onLoginSuccess(targetUser);
-  };
-
-  // Quick switch for demonstration and fast role testing
-  const handleQuickLogin = (uname: string) => {
-    const target = users.find((u) => u.username.toLowerCase() === uname.toLowerCase());
-    if (target) {
-      onLoginSuccess(target);
-    }
   };
 
   // Handle self registration
@@ -218,7 +209,7 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                     <input
                       type="text"
                       required
-                      placeholder="e.g. admin, editor, or viewer"
+                      placeholder="Enter your username"
                       value={username}
                       onChange={(e) => setUsername(e.target.value)}
                       className="w-full pl-9 pr-3 py-2.5 bg-slate-800/90 border border-slate-700 rounded-lg text-white text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 focus:border-transparent transition-all"
@@ -259,50 +250,6 @@ export const LoginScreen: React.FC<LoginScreenProps> = ({
                   <span>Sign In</span>
                   <ArrowRight className="w-4 h-4" />
                 </button>
-
-                {/* Fast One-Click Demo Role Switcher */}
-                <div className="pt-4 border-t border-slate-800">
-                  <span className="text-[11px] text-slate-400 block mb-2 font-medium">
-                    Quick Demo Logins (PIN: 1234):
-                  </span>
-                  <div className="grid grid-cols-3 gap-2">
-                    <button
-                      type="button"
-                      onClick={() => handleQuickLogin('admin')}
-                      className="p-2 bg-slate-800 hover:bg-slate-700/80 rounded border border-slate-700/80 text-left transition-colors"
-                    >
-                      <div className="flex items-center gap-1.5 text-indigo-400 font-semibold">
-                        <ShieldCheck className="w-3.5 h-3.5" />
-                        <span>Admin</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 block mt-0.5 truncate">Full Control</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleQuickLogin('editor')}
-                      className="p-2 bg-slate-800 hover:bg-slate-700/80 rounded border border-slate-700/80 text-left transition-colors"
-                    >
-                      <div className="flex items-center gap-1.5 text-emerald-400 font-semibold">
-                        <UserCheck className="w-3.5 h-3.5" />
-                        <span>Editor</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 block mt-0.5 truncate">Add / Edit</span>
-                    </button>
-
-                    <button
-                      type="button"
-                      onClick={() => handleQuickLogin('viewer')}
-                      className="p-2 bg-slate-800 hover:bg-slate-700/80 rounded border border-slate-700/80 text-left transition-colors"
-                    >
-                      <div className="flex items-center gap-1.5 text-sky-400 font-semibold">
-                        <Lock className="w-3.5 h-3.5" />
-                        <span>Viewer</span>
-                      </div>
-                      <span className="text-[10px] text-slate-400 block mt-0.5 truncate">Read-Only</span>
-                    </button>
-                  </div>
-                </div>
               </form>
             ) : (
               <form onSubmit={handleRegister} className="space-y-3.5 text-xs">

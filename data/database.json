@@ -1,0 +1,28 @@
+{
+  "transactions": [],
+  "users": [
+    {
+      "id": "USR-001",
+      "username": "admin",
+      "fullName": "System Administrator",
+      "pin": "1234",
+      "role": "admin",
+      "isActive": true,
+      "createdAt": "2026-01-01T08:00:00.000Z",
+      "lastLoginAt": "2026-10-18T08:00:00.000Z"
+    }
+  ],
+  "companyProfile": {
+    "companyName": "Vertex Engineering & Design Consultancy",
+    "tagline": "Civil, Structural & MEPFS Engineering Services",
+    "logoIcon": "building",
+    "accentColor": "#4f46e5",
+    "address": "Suite 804, Cybergate Center, Ortigas Ave, Pasig City, Philippines",
+    "contactInfo": "inquiries@vertexeng.com · +63 (2) 8876-2000",
+    "tinNumber": "TIN: 240-891-342-000",
+    "signatoryName": "Engr. Roberto D. Cruz, PE",
+    "signatoryTitle": "Managing Principal & Senior Consultant"
+  },
+  "currency": "PHP",
+  "lastUpdated": "2026-10-18T13:25:12.248Z"
+}

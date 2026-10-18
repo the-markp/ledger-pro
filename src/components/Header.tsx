@@ -289,12 +289,12 @@ export const Header: React.FC<HeaderProps> = ({
                 <KeyRound className="w-3.5 h-3.5" />
               </button>
 
-              {/* Reset Seed Data (Admin only) */}
+              {/* Clear / Reset Ledger Data (Admin only) */}
               {permissions.canManageUsers && (
                 <button
                   onClick={onResetSeedData}
                   className="p-1.5 text-slate-400 hover:text-slate-200 hover:bg-slate-800 rounded-lg transition-colors"
-                  title="Reset Sample Engineering Data"
+                  title="Clear / Reset Ledger Data"
                 >
                   <RotateCcw className="w-3.5 h-3.5" />
                 </button>

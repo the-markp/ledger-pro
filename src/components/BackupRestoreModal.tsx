@@ -374,27 +374,27 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
             )}
           </div>
 
-          {/* Section 3: Factory Sample Reset */}
+          {/* Section 3: Reset / Clear Ledger */}
           <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
             <div>
-              <span className="font-semibold text-slate-900 block">Reset to Sample Engineering Data</span>
+              <span className="font-semibold text-slate-900 block">Clear / Reset Ledger Records</span>
               <p className="text-[11px] text-slate-500 mt-0.5">
-                Restores the standard sample engineering and architectural projects.
+                Clears all transaction records and starts with a fresh clean ledger.
               </p>
             </div>
             <button
               type="button"
               onClick={() => {
-                if (window.confirm('Reset all transaction records to sample engineering data?')) {
+                if (window.confirm('Clear all transaction records and reset to an empty ledger?')) {
                   onResetSeedData();
-                  setSuccessMsg('Sample engineering project data restored.');
+                  setSuccessMsg('Ledger transactions cleared.');
                   setTimeout(() => setSuccessMsg(''), 3000);
                 }
               }}
-              className="px-3 py-1.5 text-xs text-slate-600 hover:text-slate-900 bg-white hover:bg-slate-100 rounded-lg border border-slate-300 font-medium transition-colors flex items-center gap-1.5 shadow-2xs"
+              className="px-3 py-1.5 text-xs text-rose-600 hover:text-rose-700 bg-white hover:bg-rose-50 rounded-lg border border-rose-200 font-medium transition-colors flex items-center gap-1.5 shadow-2xs"
             >
               <RotateCcw className="w-3.5 h-3.5" />
-              <span>Reset Sample Data</span>
+              <span>Clear Ledger Data</span>
             </button>
           </div>
         </div>

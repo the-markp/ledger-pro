@@ -2,6 +2,7 @@ import express from 'express';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import { apiRouter } from './server/apiRouter.js';
+import { db } from './server/db.js';
 
 const __filename = fileURLToPath(import.meta.url);
 const __dirname = path.dirname(__filename);
@@ -9,6 +10,9 @@ const __dirname = path.dirname(__filename);
 const app = express();
 const PORT = process.env.PORT || 8001;
 const HOST = process.env.HOST || '0.0.0.0';
+
+// Initialize Database (PostgreSQL if configured, with resilient file fallback)
+await db.init();
 
 // Permissive CORS middleware for Android app, emulators, and reverse proxies
 app.use((req, res, next) => {
@@ -27,7 +31,11 @@ app.use(express.urlencoded({ extended: true, limit: '20mb' }));
 
 // Health check endpoint for container orchestrators (Kubernetes / Docker healthcheck)
 app.get('/health', (req, res) => {
-  res.status(200).json({ status: 'ok', timestamp: new Date().toISOString() });
+  res.status(200).json({
+    status: 'ok',
+    database: db.isPostgresConnected ? 'PostgreSQL' : 'JSON (Fallback)',
+    timestamp: new Date().toISOString()
+  });
 });
 
 // Mount the Backend REST API for Android Mobile App and Web SPA
@@ -45,4 +53,5 @@ app.get('*', (req, res) => {
 app.listen(Number(PORT), HOST, () => {
   console.log(`🚀 LedgerPro Backend & Web Server is running on http://${HOST}:${PORT}`);
   console.log(`📱 Android API Endpoint available at http://${HOST}:${PORT}/api`);
+  console.log(`💾 Database Storage Mode: ${db.isPostgresConnected ? '🐘 PostgreSQL Relational Database (Persistent)' : '📁 JSON File Storage'}`);
 });

@@ -499,26 +499,36 @@ export const AndroidCompanionModal: React.FC<AndroidCompanionModalProps> = ({
                 </div>
 
                 <div className="p-4 rounded-xl bg-slate-800/40 border border-slate-700/80 space-y-3">
-                  <h4 className="text-xs font-bold text-slate-200">Key Port Configurations</h4>
+                  <h4 className="text-xs font-bold text-slate-200">System & Database Architecture</h4>
                   
-                  <div className="grid grid-cols-1 sm:grid-cols-2 gap-3 text-xs">
+                  <div className="grid grid-cols-1 sm:grid-cols-3 gap-3 text-xs">
                     <div className="p-3 rounded-lg bg-slate-900 border border-emerald-500/30">
                       <div className="flex items-center gap-2 text-emerald-400 font-semibold">
                         <CheckCircle2 className="w-4 h-4" />
                         Exposed Port: 8001
                       </div>
                       <p className="mt-1 text-[11px] text-slate-400">
-                        Mapped to container <code className="text-slate-200 font-mono">8001:8001</code> in <code className="text-slate-200 font-mono">docker-compose.yml</code> and <code className="text-slate-200 font-mono">Dockerfile</code>.
+                        Mapped to container <code className="text-slate-200 font-mono">8001:8001</code> in <code className="text-slate-200 font-mono">docker-compose.yml</code>.
+                      </p>
+                    </div>
+
+                    <div className="p-3 rounded-lg bg-slate-900 border border-indigo-500/30">
+                      <div className="flex items-center gap-2 text-indigo-400 font-semibold">
+                        <Database className="w-4 h-4" />
+                        PostgreSQL 16 (Port 5432)
+                      </div>
+                      <p className="mt-1 text-[11px] text-slate-400">
+                        Persistent volume <code className="text-slate-200 font-mono">postgres_data</code> stores transactions, users, and branding.
                       </p>
                     </div>
 
                     <div className="p-3 rounded-lg bg-slate-900 border border-blue-500/30">
                       <div className="flex items-center gap-2 text-blue-400 font-semibold">
                         <Database className="w-4 h-4" />
-                        Host Database Port: 3304
+                        Host Database: Port 3304
                       </div>
                       <p className="mt-1 text-[11px] text-slate-400">
-                        Port 3304 is reserved for your host database instance and is untouched by LedgerPro. Zero port conflict.
+                        Port 3304 is reserved for your host database instance and is untouched. Zero conflict.
                       </p>
                     </div>
                   </div>
