@@ -11,7 +11,7 @@ WORKDIR /app
 COPY package*.json ./
 
 # Install all dependencies (including devDependencies required for vite build)
-RUN npm install
+RUN npm install --legacy-peer-deps
 
 # Copy application source code
 COPY . .
@@ -39,7 +39,7 @@ RUN addgroup -S appgroup && adduser -S appuser -G appgroup
 
 # Copy package files and install only production dependencies
 COPY package*.json ./
-RUN npm install --omit=dev && npm cache clean --force
+RUN npm install --omit=dev --legacy-peer-deps && npm cache clean --force
 
 # Copy built frontend assets from builder stage
 COPY --from=builder /app/dist ./dist
