@@ -22,11 +22,14 @@ import {
   KeyRound,
   ShieldCheck,
   UserCheck,
-  Lock
+  Lock,
+  Download,
+  X
 } from 'lucide-react';
 import { Currency, CURRENCIES, formatCurrency } from '../utils/formatters';
 import { Transaction, CompanyProfile, LogoIconType } from '../types/transaction';
 import { User, ROLE_PERMISSIONS } from '../types/auth';
+import { usePWAInstall } from '../hooks/usePWAInstall';
 
 interface HeaderProps {
   currentTab: 'transactions' | 'weekly' | 'monthly' | 'analytics';
@@ -80,6 +83,17 @@ export const Header: React.FC<HeaderProps> = ({
 
   const LogoIcon = ICON_MAP[companyProfile.logoIcon] || Building2;
   const permissions = ROLE_PERMISSIONS[currentUser.role];
+
+  const { isInstallable, isInstalled, isIOS, install } = usePWAInstall();
+  const [showInstallGuide, setShowInstallGuide] = React.useState(false);
+
+  const handleInstallClick = async () => {
+    if (isInstallable) {
+      await install();
+    } else {
+      setShowInstallGuide(true);
+    }
+  };
 
   return (
     <header className="bg-slate-900 border-b border-slate-800 text-white sticky top-0 z-30 shadow-md">
@@ -235,6 +249,18 @@ export const Header: React.FC<HeaderProps> = ({
               <span className="hidden sm:inline">Android App</span>
             </button>
 
+            {/* PWA Install Button */}
+            {!isInstalled && (
+              <button
+                onClick={handleInstallClick}
+                className="inline-flex items-center gap-1.5 px-2.5 py-1.5 text-xs font-medium bg-indigo-950/70 hover:bg-indigo-900/90 text-indigo-300 hover:text-indigo-100 rounded-lg border border-indigo-500/40 transition-colors shadow-xs"
+                title="Install LedgerPro as Progressive Web App"
+              >
+                <Download className="w-3.5 h-3.5 text-indigo-400" />
+                <span className="hidden sm:inline">Install PWA</span>
+              </button>
+            )}
+
             {/* Export (Available to all roles) */}
             <button
               onClick={onOpenExportModal}
@@ -382,6 +408,49 @@ export const Header: React.FC<HeaderProps> = ({
           </div>
         </div>
       </div>
+
+      {/* PWA Installation Instructions Modal */}
+      {showInstallGuide && (
+        <div className="fixed inset-0 z-50 overflow-y-auto bg-slate-900/60 backdrop-blur-xs flex items-center justify-center p-4">
+          <div className="bg-slate-900 border border-slate-700 rounded-xl shadow-2xl p-6 max-w-md w-full text-left space-y-4 text-xs animate-in fade-in">
+            <div className="flex items-center justify-between pb-2 border-b border-slate-800">
+              <div className="flex items-center gap-2">
+                <Download className="w-4 h-4 text-indigo-400" />
+                <h3 className="font-semibold text-white text-sm">Install LedgerPro App</h3>
+              </div>
+              <button onClick={() => setShowInstallGuide(false)} className="text-slate-400 hover:text-white">
+                <X className="w-4 h-4" />
+              </button>
+            </div>
+
+            <p className="text-slate-300 leading-relaxed">
+              LedgerPro can be installed directly onto your desktop or mobile device as a Progressive Web App:
+            </p>
+
+            <div className="space-y-2.5 bg-slate-800/60 p-3 rounded-lg border border-slate-700/60">
+              <div className="flex items-start gap-2">
+                <span className="px-1.5 py-0.5 rounded bg-indigo-500/20 text-indigo-300 font-mono text-[10px] shrink-0 mt-0.5">Desktop / Chrome</span>
+                <span className="text-slate-300">Click the <strong>Install</strong> icon (⊕) on the right side of the address bar.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="px-1.5 py-0.5 rounded bg-emerald-500/20 text-emerald-300 font-mono text-[10px] shrink-0 mt-0.5">Android</span>
+                <span className="text-slate-300">Tap the browser menu (⋮) and select <strong>Install App</strong> or <strong>Add to Home screen</strong>.</span>
+              </div>
+              <div className="flex items-start gap-2">
+                <span className="px-1.5 py-0.5 rounded bg-sky-500/20 text-sky-300 font-mono text-[10px] shrink-0 mt-0.5">iOS Safari</span>
+                <span className="text-slate-300">Tap the <strong>Share</strong> button (box with arrow) at the bottom, then choose <strong>Add to Home Screen</strong>.</span>
+              </div>
+            </div>
+
+            <button
+              onClick={() => setShowInstallGuide(false)}
+              className="w-full py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg transition-colors"
+            >
+              Close
+            </button>
+          </div>
+        </div>
+      )}
     </header>
   );
 };

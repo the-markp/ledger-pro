@@ -1,4 +1,4 @@
-import React, { useState, useRef } from 'react';
+import React, { useState, useRef, useEffect } from 'react';
 import { 
   X, 
   Download, 
@@ -9,7 +9,11 @@ import {
   AlertTriangle, 
   RotateCcw, 
   ShieldCheck,
-  FileSpreadsheet
+  Clock,
+  History,
+  Terminal,
+  RefreshCw,
+  Archive
 } from 'lucide-react';
 import { Transaction, CompanyProfile } from '../types/transaction';
 import { User } from '../types/auth';
@@ -26,6 +30,12 @@ interface BackupRestoreModalProps {
     users?: User[];
   }) => void;
   onResetSeedData: () => void;
+}
+
+interface StoredBackup {
+  filename: string;
+  sizeKb: string;
+  createdAt: string;
 }
 
 export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
@@ -50,17 +60,63 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
     raw: any;
   } | null>(null);
 
+  const [storedBackups, setStoredBackups] = useState<StoredBackup[]>([]);
+  const [isLoadingBackups, setIsLoadingBackups] = useState(false);
+  const [isTriggeringBackup, setIsTriggeringBackup] = useState(false);
   const [error, setError] = useState('');
   const [successMsg, setSuccessMsg] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
 
+  // Load retained backups from backend
+  const fetchStoredBackups = async () => {
+    setIsLoadingBackups(true);
+    try {
+      const res = await fetch('/api/backup/list');
+      if (res.ok) {
+        const data = await res.json();
+        setStoredBackups(data.backups || []);
+      }
+    } catch (e) {
+      // Offline or fallback
+    } finally {
+      setIsLoadingBackups(false);
+    }
+  };
+
+  useEffect(() => {
+    if (isOpen) {
+      fetchStoredBackups();
+    }
+  }, [isOpen]);
+
   if (!isOpen) return null;
+
+  // Trigger automated daily backup run
+  const handleTriggerAutomatedBackup = async () => {
+    setIsTriggeringBackup(true);
+    setError('');
+    setSuccessMsg('');
+    try {
+      const res = await fetch('/api/backup/automated', { method: 'POST' });
+      if (res.ok) {
+        const data = await res.json();
+        setSuccessMsg(`Automated backup complete! Saved as ${data.filename} and retained 10 latest snapshots.`);
+        fetchStoredBackups();
+      } else {
+        setError('Server was unable to create automated backup. Check console logs.');
+      }
+    } catch (e: any) {
+      setError(`Failed to trigger automated backup: ${e.message}`);
+    } finally {
+      setIsTriggeringBackup(false);
+    }
+  };
 
   // Create & Download JSON Backup
   const handleDownloadBackup = () => {
     const backupPayload = {
       app: 'LedgerPro',
-      version: '2.0.0',
+      version: '2.1.0',
       exportedAt: new Date().toISOString(),
       companyProfile: includeBranding ? companyProfile : undefined,
       users: includeUsers ? users : undefined,
@@ -83,70 +139,73 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
     downloadAnchor.click();
     downloadAnchor.remove();
 
-    setSuccessMsg('Backup package generated and downloaded successfully.');
+    setSuccessMsg('Comprehensive JSON backup downloaded successfully!');
     setTimeout(() => setSuccessMsg(''), 4000);
   };
 
-  // Handle backup file upload and parse preview
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
+  // File Upload & Validation for Restore
+  const handleFileChange = (e: React.ChangeEvent<HTMLInputElement>) => {
     setError('');
-    setPreviewData(null);
+    setSuccessMsg('');
     const file = e.target.files?.[0];
     if (!file) return;
 
+    if (!file.name.endsWith('.json')) {
+      setError('Invalid file format. Please upload a valid JSON backup file.');
+      return;
+    }
+
     const reader = new FileReader();
-    reader.onload = () => {
+    reader.onload = (event) => {
       try {
-        const parsed = JSON.parse(reader.result as string);
-        if (!parsed || (!parsed.transactions && !Array.isArray(parsed))) {
-          setError('Invalid backup file. Missing transaction data records.');
-          return;
+        const content = event.target?.result as string;
+        const parsed = JSON.parse(content);
+
+        if (!parsed || (typeof parsed !== 'object')) {
+          throw new Error('Backup file does not contain valid JSON data.');
         }
 
-        const txList = Array.isArray(parsed) ? parsed : (parsed.transactions || []);
-        const uList = parsed.users || [];
+        const txList = Array.isArray(parsed.transactions) ? parsed.transactions : [];
+        const usrList = Array.isArray(parsed.users) ? parsed.users : [];
         const comp = parsed.companyProfile?.companyName;
 
         setPreviewData({
-          version: parsed.version || '1.0',
-          timestamp: parsed.exportedAt || 'Unknown date',
+          version: parsed.version || 'Unknown',
+          timestamp: parsed.exportedAt || parsed.timestamp,
           transactionsCount: txList.length,
-          usersCount: uList.length,
+          usersCount: usrList.length,
           companyName: comp,
           raw: parsed,
         });
-      } catch (err) {
-        setError('Failed to parse backup file. Please ensure it is a valid JSON document.');
+      } catch (err: any) {
+        setError(`Failed to read backup file: ${err.message}`);
+        setPreviewData(null);
       }
     };
     reader.readAsText(file);
   };
 
-  // Execute restore
-  const handleExecuteRestore = () => {
-    if (!previewData) return;
-    setError('');
+  // Confirm and Execute Restore
+  const handleApplyRestore = () => {
+    if (!previewData || !previewData.raw) return;
 
     try {
-      const incomingTxs: Transaction[] = Array.isArray(previewData.raw)
-        ? previewData.raw
-        : (previewData.raw.transactions || []);
-
-      let finalTxs: Transaction[] = incomingTxs;
-      if (restoreMode === 'merge') {
-        const existingMap = new Map<string, Transaction>();
-        transactions.forEach((t) => existingMap.set(t.id, t));
-        incomingTxs.forEach((t) => existingMap.set(t.id, t));
-        finalTxs = Array.from(existingMap.values());
-      }
-
+      const incomingTxs: Transaction[] = previewData.raw.transactions || [];
       const restorePayload: {
-        transactions: Transaction[];
+        transactions?: Transaction[];
         companyProfile?: CompanyProfile;
         users?: User[];
-      } = {
-        transactions: finalTxs,
-      };
+      } = {};
+
+      if (restoreMode === 'replace') {
+        restorePayload.transactions = incomingTxs;
+      } else {
+        const existingMap = new Map(transactions.map((t) => [t.id, t]));
+        incomingTxs.forEach((tx) => {
+          existingMap.set(tx.id, tx);
+        });
+        restorePayload.transactions = Array.from(existingMap.values());
+      }
 
       if (previewData.raw.companyProfile) {
         restorePayload.companyProfile = previewData.raw.companyProfile;
@@ -184,7 +243,7 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                 Backup & Restore System Data
               </h2>
               <p className="text-xs text-slate-500 mt-0.5">
-                Download JSON archives of your accounting ledger, user accounts, and company settings.
+                Automated daily snapshots, strict 10-backup retention policy, and instant manual JSON export.
               </p>
             </div>
           </div>
@@ -213,121 +272,165 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
             </div>
           )}
 
-          {/* Section 1: Create Backup */}
+          {/* Section 1: Automated Daily Backups with 10-Backup Retention */}
+          <div className="p-4 bg-indigo-50/60 rounded-xl border border-indigo-100 space-y-3">
+            <div className="flex items-center justify-between pb-2 border-b border-indigo-100">
+              <div className="flex items-center gap-2">
+                <Clock className="w-4 h-4 text-indigo-600" />
+                <h3 className="font-semibold text-slate-900">Automated Daily Backups & Retention</h3>
+              </div>
+              <span className="px-2 py-0.5 rounded-full text-[11px] font-medium bg-indigo-100 text-indigo-700">
+                Strict 10-Backup Retention
+              </span>
+            </div>
+
+            <p className="text-[11px] text-slate-600 leading-relaxed">
+              LedgerPro includes automated snapshot scripts (<code className="bg-indigo-100/70 text-indigo-900 px-1 py-0.5 rounded font-mono">scripts/backup.sh</code> and <code className="bg-indigo-100/70 text-indigo-900 px-1 py-0.5 rounded font-mono">scripts/backup.js</code>) that generate daily archives and automatically delete older backups to keep strictly the <strong>10 most recent backups</strong>.
+            </p>
+
+            <div className="flex items-center justify-between pt-1">
+              <div className="text-[11px] text-slate-500">
+                <span>Stored snapshots: </span>
+                <strong className="text-slate-800">{storedBackups.length} / 10 retained</strong>
+              </div>
+              <button
+                type="button"
+                onClick={handleTriggerAutomatedBackup}
+                disabled={isTriggeringBackup}
+                className="px-3 py-1.5 bg-indigo-600 hover:bg-indigo-500 disabled:opacity-50 text-white font-medium rounded-lg shadow-2xs transition-colors flex items-center gap-1.5 text-xs"
+              >
+                <RefreshCw className={`w-3.5 h-3.5 ${isTriggeringBackup ? 'animate-spin' : ''}`} />
+                <span>{isTriggeringBackup ? 'Running Backup...' : 'Run Backup & Prune Now'}</span>
+              </button>
+            </div>
+
+            {/* List of Recent Retained Backups */}
+            {storedBackups.length > 0 && (
+              <div className="mt-2 pt-2 border-t border-indigo-100/80 space-y-1.5">
+                <span className="text-[11px] font-medium text-slate-700 flex items-center gap-1">
+                  <Archive className="w-3.5 h-3.5 text-indigo-600" />
+                  Recent Retained Backups (Auto-pruned beyond 10)
+                </span>
+                <div className="max-h-28 overflow-y-auto space-y-1 bg-white rounded-lg p-2 border border-indigo-100">
+                  {storedBackups.map((b, i) => (
+                    <div key={b.filename} className="flex items-center justify-between text-[11px] py-0.5 px-1 hover:bg-indigo-50/50 rounded">
+                      <div className="flex items-center gap-2">
+                        <span className="font-mono text-slate-500 text-[10px]">#{i + 1}</span>
+                        <span className="font-mono text-slate-700">{b.filename}</span>
+                      </div>
+                      <span className="text-slate-400 font-mono text-[10px]">{b.sizeKb} KB</span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
+
+            {/* Cron Command Instruction */}
+            <div className="p-2.5 bg-slate-900 rounded-lg text-slate-300 font-mono text-[11px] flex items-center justify-between">
+              <div className="flex items-center gap-2 overflow-x-auto">
+                <Terminal className="w-3.5 h-3.5 text-indigo-400 shrink-0" />
+                <span>0 2 * * * /app/scripts/backup.sh</span>
+              </div>
+              <span className="text-[10px] text-slate-400 shrink-0 ml-2">Every day at 2:00 AM</span>
+            </div>
+          </div>
+
+          {/* Section 2: Manual Download JSON Backup */}
           <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
             <div className="flex items-center justify-between pb-2 border-b border-slate-200">
               <h3 className="font-semibold text-slate-900 flex items-center gap-1.5">
                 <Download className="w-4 h-4 text-indigo-600" />
-                <span>Export System Backup</span>
+                <span>Export Manual Backup Archive</span>
               </h3>
               <span className="text-[11px] text-slate-500">
-                Current Records: <span className="font-bold text-slate-800">{transactions.length}</span>
+                Current Records: <strong>{transactions.length}</strong>
               </span>
             </div>
 
-            <p className="text-slate-600">
-              Generates a full JSON snapshot of your engineering database, including project details, payment statuses, and financial milestones.
-            </p>
-
-            <div className="flex flex-wrap gap-4 text-slate-700">
-              <label className="flex items-center gap-2 cursor-pointer select-none">
-                <input
-                  type="checkbox"
-                  checked={includeBranding}
-                  onChange={(e) => setIncludeBranding(e.target.checked)}
-                  className="rounded text-indigo-600 border-slate-300"
-                />
-                <span>Include Company Branding & Signatories</span>
-              </label>
-
-              <label className="flex items-center gap-2 cursor-pointer select-none">
+            <div className="grid grid-cols-2 gap-3">
+              <label className="flex items-center gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
                 <input
                   type="checkbox"
                   checked={includeUsers}
                   onChange={(e) => setIncludeUsers(e.target.checked)}
-                  className="rounded text-indigo-600 border-slate-300"
+                  className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
                 />
-                <span>Include User Accounts & Roles ({users.length})</span>
+                <span className="text-slate-700">Include Authorized Users & Roles</span>
+              </label>
+
+              <label className="flex items-center gap-2 p-2.5 rounded-lg bg-white border border-slate-200 cursor-pointer hover:bg-slate-50 transition-colors">
+                <input
+                  type="checkbox"
+                  checked={includeBranding}
+                  onChange={(e) => setIncludeBranding(e.target.checked)}
+                  className="rounded text-indigo-600 focus:ring-indigo-500 w-3.5 h-3.5"
+                />
+                <span className="text-slate-700">Include Company Profile & Branding</span>
               </label>
             </div>
 
-            <div className="pt-2">
-              <button
-                type="button"
-                onClick={handleDownloadBackup}
-                className="inline-flex items-center gap-2 px-4 py-2 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg shadow-sm transition-colors"
-              >
-                <FileJson className="w-4 h-4" />
-                <span>Download Full JSON Backup</span>
-              </button>
-            </div>
+            <button
+              type="button"
+              onClick={handleDownloadBackup}
+              className="w-full py-2.5 px-4 bg-indigo-600 hover:bg-indigo-500 text-white font-medium rounded-lg shadow-xs transition-colors flex items-center justify-center gap-2 text-xs"
+            >
+              <Download className="w-4 h-4" />
+              <span>Download Backup File (.json)</span>
+            </button>
           </div>
 
-          {/* Section 2: Restore from Backup */}
+          {/* Section 3: Restore Backup */}
           <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 space-y-3">
             <div className="flex items-center justify-between pb-2 border-b border-slate-200">
               <h3 className="font-semibold text-slate-900 flex items-center gap-1.5">
                 <Upload className="w-4 h-4 text-emerald-600" />
-                <span>Restore Database from File</span>
+                <span>Restore From File</span>
               </h3>
             </div>
 
-            <p className="text-slate-600">
-              Upload a previously exported LedgerPro JSON backup file to restore records and system state.
-            </p>
-
-            <div className="flex items-center gap-3">
+            <div>
+              <label className="block text-slate-700 font-medium mb-1.5">
+                Select LedgerPro Backup File (.json)
+              </label>
               <input
                 ref={fileInputRef}
                 type="file"
-                accept=".json,application/json"
-                onChange={handleFileUpload}
-                className="hidden"
-                id="backup-file-upload"
+                accept=".json"
+                onChange={handleFileChange}
+                className="w-full text-xs text-slate-500 file:mr-4 file:py-2 file:px-4 file:rounded-lg file:border-0 file:text-xs file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100 cursor-pointer"
               />
-              <label
-                htmlFor="backup-file-upload"
-                className="inline-flex items-center gap-1.5 px-3 py-2 bg-white hover:bg-slate-100 border border-slate-300 rounded-lg text-slate-700 font-medium cursor-pointer transition-colors shadow-2xs"
-              >
-                <Upload className="w-3.5 h-3.5 text-emerald-600" />
-                <span>Select JSON Backup File</span>
-              </label>
             </div>
 
-            {/* Backup Preview card */}
             {previewData && (
-              <div className="p-3.5 bg-white rounded-lg border border-indigo-200 shadow-xs space-y-3 animate-in fade-in duration-150">
-                <div className="flex items-center justify-between border-b border-slate-100 pb-2">
-                  <span className="font-bold text-slate-900 flex items-center gap-1.5">
-                    <CheckCircle2 className="w-4 h-4 text-emerald-600" />
-                    <span>Backup File Verified</span>
-                  </span>
-                  <span className="text-[11px] font-mono text-slate-400">
-                    Exported: {new Date(previewData.timestamp || '').toLocaleString()}
+              <div className="p-3 bg-white rounded-lg border border-slate-300 space-y-3">
+                <div className="flex items-center justify-between">
+                  <span className="font-semibold text-slate-900">Backup File Contents Verified:</span>
+                  <span className="text-[10px] bg-slate-100 text-slate-600 px-2 py-0.5 rounded font-mono">
+                    v{previewData.version}
                   </span>
                 </div>
 
-                <div className="grid grid-cols-3 gap-2 text-center font-mono">
-                  <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                    <span className="text-[10px] text-slate-400 block uppercase">Transactions</span>
-                    <span className="text-sm font-bold text-slate-800">{previewData.transactionsCount}</span>
+                <div className="grid grid-cols-3 gap-2 text-[11px]">
+                  <div className="p-2 bg-slate-50 rounded border border-slate-200">
+                    <span className="text-slate-500 block">Transactions</span>
+                    <strong className="text-slate-800 text-xs">{previewData.transactionsCount}</strong>
                   </div>
-                  <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                    <span className="text-[10px] text-slate-400 block uppercase">Users Included</span>
-                    <span className="text-sm font-bold text-slate-800">{previewData.usersCount}</span>
+                  <div className="p-2 bg-slate-50 rounded border border-slate-200">
+                    <span className="text-slate-500 block">Users</span>
+                    <strong className="text-slate-800 text-xs">{previewData.usersCount}</strong>
                   </div>
-                  <div className="p-2 bg-slate-50 rounded border border-slate-100">
-                    <span className="text-[10px] text-slate-400 block uppercase">Company</span>
-                    <span className="text-xs font-semibold text-slate-800 truncate block">
-                      {previewData.companyName || 'Not specified'}
-                    </span>
+                  <div className="p-2 bg-slate-50 rounded border border-slate-200 truncate">
+                    <span className="text-slate-500 block">Company</span>
+                    <strong className="text-slate-800 text-xs truncate block" title={previewData.companyName}>
+                      {previewData.companyName || 'N/A'}
+                    </strong>
                   </div>
                 </div>
 
-                <div className="space-y-1.5 pt-1">
-                  <span className="font-medium text-slate-700 block">Restore Strategy:</span>
-                  <div className="flex items-center gap-4">
-                    <label className="flex items-center gap-2 cursor-pointer text-slate-700">
+                <div className="pt-2 border-t border-slate-200">
+                  <label className="block text-slate-700 font-medium mb-1">Restore Strategy</label>
+                  <div className="flex gap-4">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
                       <input
                         type="radio"
                         name="restoreMode"
@@ -336,10 +439,9 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                         onChange={() => setRestoreMode('replace')}
                         className="text-indigo-600"
                       />
-                      <span>Replace existing ledger (Clean overwrite)</span>
+                      <span>Replace all current records (Clean state)</span>
                     </label>
-
-                    <label className="flex items-center gap-2 cursor-pointer text-slate-700">
+                    <label className="flex items-center gap-1.5 cursor-pointer">
                       <input
                         type="radio"
                         name="restoreMode"
@@ -353,10 +455,10 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
                   </div>
                 </div>
 
-                <div className="pt-2 flex items-center gap-2">
+                <div className="flex items-center gap-2 pt-2">
                   <button
                     type="button"
-                    onClick={handleExecuteRestore}
+                    onClick={handleApplyRestore}
                     className="px-4 py-2 bg-emerald-600 hover:bg-emerald-500 text-white font-medium rounded-lg shadow-xs transition-colors flex items-center gap-1.5"
                   >
                     <CheckCircle2 className="w-4 h-4" />
@@ -374,7 +476,7 @@ export const BackupRestoreModal: React.FC<BackupRestoreModalProps> = ({
             )}
           </div>
 
-          {/* Section 3: Reset / Clear Ledger */}
+          {/* Section 4: Reset / Clear Ledger */}
           <div className="p-4 bg-slate-50 rounded-xl border border-slate-200 flex items-center justify-between">
             <div>
               <span className="font-semibold text-slate-900 block">Clear / Reset Ledger Records</span>

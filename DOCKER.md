@@ -186,3 +186,31 @@ docker exec -it ledgerpro-postgres psql -U ledgerpro_user -d ledgerpro_db
 # SELECT id, client, total_bill, payment_status FROM transactions;
 # SELECT id, username, full_name, role FROM users;
 ```
+
+---
+
+## 💾 Automated Daily Backups & 10-Backup Retention Policy
+
+LedgerPro includes automated daily backup scripts that take complete snapshots (accounting records, user accounts, and branding) and **retain only the 10 most recent backups** (deleting older files automatically).
+
+### Manual Run:
+```bash
+# Run one-shot backup now
+./scripts/backup.sh
+# or via npm
+npm run backup
+```
+
+### Automate via Cron (Daily at 2:00 AM):
+Add this line to your crontab (`crontab -e`):
+```bash
+0 2 * * * cd /path/to/ledgerpro && ./scripts/backup.sh >> /path/to/ledgerpro/backups/backup.log 2>&1
+```
+
+### Run as Background Daemon:
+```bash
+# Runs continuously every 24 hours
+node scripts/backup.js --daemon
+# or via npm
+npm run backup:daemon
+```

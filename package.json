@@ -9,7 +9,9 @@
     "preview": "vite preview",
     "start": "node server.js",
     "clean": "rm -rf dist server.js",
-    "lint": "tsc --noEmit"
+    "lint": "tsc --noEmit",
+    "backup": "node scripts/backup.js",
+    "backup:daemon": "node scripts/backup.js --daemon"
   },
   "dependencies": {
     "@google/genai": "^2.4.0",

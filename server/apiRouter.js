@@ -231,6 +231,43 @@ apiRouter.get('/backup', async (req, res) => {
   }
 });
 
+apiRouter.get('/backup/list', async (req, res) => {
+  try {
+    const fs = await import('fs');
+    const path = await import('path');
+    const backupDir = path.join(process.cwd(), 'backups');
+    if (!fs.existsSync(backupDir)) {
+      return res.json({ backups: [], maxRetention: 10 });
+    }
+    const files = fs.readdirSync(backupDir)
+      .filter((f) => f.startsWith('ledgerpro_backup_') && f.endsWith('.json'))
+      .map((f) => {
+        const fullPath = path.join(backupDir, f);
+        const stats = fs.statSync(fullPath);
+        return {
+          filename: f,
+          sizeKb: (stats.size / 1024).toFixed(2),
+          createdAt: stats.mtime.toISOString()
+        };
+      })
+      .sort((a, b) => new Date(b.createdAt).getTime() - new Date(a.createdAt).getTime());
+
+    res.json({ backups: files, maxRetention: 10 });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.post('/backup/automated', async (req, res) => {
+  try {
+    const { performBackup } = await import('../scripts/backup.js');
+    const result = await performBackup();
+    res.json({ success: true, ...result });
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
 apiRouter.post('/restore', async (req, res) => {
   try {
     await db.restoreBackup(req.body);
