@@ -24,7 +24,8 @@ import {
   UserCheck,
   Lock,
   Download,
-  X
+  X,
+  Receipt
 } from 'lucide-react';
 import { Currency, CURRENCIES, formatCurrency } from '../utils/formatters';
 import { Transaction, CompanyProfile, LogoIconType } from '../types/transaction';
@@ -47,6 +48,7 @@ interface HeaderProps {
   onLogout: () => void;
   onNewTransaction: () => void;
   onOpenExportModal: () => void;
+  onOpenClientStatement: () => void;
   onResetSeedData: () => void;
 }
 
@@ -75,6 +77,7 @@ export const Header: React.FC<HeaderProps> = ({
   onLogout,
   onNewTransaction,
   onOpenExportModal,
+  onOpenClientStatement,
   onResetSeedData,
 }) => {
   const totalBilled = transactions.reduce((sum, t) => sum + (t.totalBill || 0), 0);
@@ -260,6 +263,16 @@ export const Header: React.FC<HeaderProps> = ({
                 <span className="hidden sm:inline">Install PWA</span>
               </button>
             )}
+
+            {/* Client Statement of Account (Available to all roles) */}
+            <button
+              onClick={onOpenClientStatement}
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-amber-950/60 hover:bg-amber-900/80 text-amber-200 hover:text-white rounded-lg border border-amber-500/40 transition-colors shadow-xs"
+              title="Generate Statement of Account per Client"
+            >
+              <Receipt className="w-3.5 h-3.5 text-amber-400" />
+              <span>Client SOA</span>
+            </button>
 
             {/* Export (Available to all roles) */}
             <button

@@ -17,9 +17,21 @@ import {
   Eye,
   CheckCircle,
   Clock,
-  RotateCcw
+  RotateCcw,
+  Receipt
 } from 'lucide-react';
-import { Transaction, PaymentStatus, Currency, CompanyProfile } from '../types/transaction';
+import {
+  Transaction,
+  PaymentStatus,
+  Currency,
+  CompanyProfile,
+  DISCIPLINES,
+  DisciplineKey,
+  getDisciplineFee,
+  getDisciplineSubtotal,
+  getDisciplineNote,
+  hasDisciplineActivity,
+} from '../types/transaction';
 import { User, ROLE_PERMISSIONS } from '../types/auth';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import { exportTransactionsToExcel, exportTransactionsToPdf, exportSingleInvoicePdf } from '../utils/exportUtils';
@@ -34,6 +46,7 @@ interface TransactionsTableProps {
   onDeleteMultiple: (ids: string[]) => void;
   onOpenPaymentModal: (t: Transaction) => void;
   onBatchStatusUpdate: (ids: string[], status: PaymentStatus) => void;
+  onOpenClientStatement: (clientName?: string) => void;
 }
 
 export const TransactionsTable: React.FC<TransactionsTableProps> = ({
@@ -46,6 +59,7 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
   onDeleteMultiple,
   onOpenPaymentModal,
   onBatchStatusUpdate,
+  onOpenClientStatement,
 }) => {
   const permissions = ROLE_PERMISSIONS[currentUser.role];
   const canEdit = permissions.canEdit;
@@ -78,7 +92,7 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
       // Search
       if (searchQuery.trim()) {
         const q = searchQuery.toLowerCase();
-        const matchesQuery = 
+        const matchesQuery =
           t.client.toLowerCase().includes(q) ||
           t.projectName.toLowerCase().includes(q) ||
           t.purpose.toLowerCase().includes(q) ||
@@ -90,6 +104,7 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
           t.arch?.toLowerCase().includes(q) ||
           t.ece?.toLowerCase().includes(q) ||
           t.me?.toLowerCase().includes(q) ||
+          t.solarElectrical?.toLowerCase().includes(q) ||
           t.others?.toLowerCase().includes(q);
         if (!matchesQuery) return false;
       }
@@ -106,9 +121,7 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
 
       // Discipline filter
       if (selectedDiscipline !== 'ALL') {
-        const discKey = selectedDiscipline.toLowerCase() as keyof Transaction;
-        const val = t[discKey] as string;
-        if (!val || !val.trim()) return false;
+        if (!hasDisciplineActivity(t, selectedDiscipline as DisciplineKey)) return false;
       }
 
       // Date filter
@@ -248,8 +261,21 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
             )}
           </div>
 
-          {/* Export Quick Buttons */}
+          {/* Export & Statement Quick Buttons */}
           <div className="flex items-center gap-2 flex-wrap">
+            <button
+              onClick={() =>
+                onOpenClientStatement(selectedClient !== 'ALL' ? selectedClient : undefined)
+              }
+              className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold bg-amber-50 hover:bg-amber-100 text-amber-900 border border-amber-300 rounded-lg transition-colors shadow-xs"
+              title="Generate Statement of Account per Client"
+            >
+              <Receipt className="w-3.5 h-3.5 text-amber-700" />
+              <span>
+                {selectedClient !== 'ALL' ? `SOA: ${selectedClient}` : 'Client SOA'}
+              </span>
+            </button>
+
             <button
               onClick={() => exportTransactionsToExcel(filteredTransactions, currency, 'Transactions_Ledger', companyProfile)}
               className="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-medium bg-emerald-50 hover:bg-emerald-100 text-emerald-800 border border-emerald-200 rounded-lg transition-colors shadow-xs"
@@ -337,13 +363,11 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
             className="px-2.5 py-1.5 bg-white border border-slate-300 rounded-lg text-slate-800 focus:outline-none focus:ring-1 focus:ring-indigo-500 cursor-pointer"
           >
             <option value="ALL">All Disciplines</option>
-            <option value="ee">Has EE (Electrical)</option>
-            <option value="pl">Has Pl (Plumbing)</option>
-            <option value="st">Has St (Structural)</option>
-            <option value="arch">Has Arch (Architectural)</option>
-            <option value="ece">Has ECE (Electronics)</option>
-            <option value="me">Has ME (Mechanical)</option>
-            <option value="others">Has Others</option>
+            {DISCIPLINES.map((d) => (
+              <option key={d.key} value={d.key}>
+                Has {d.shortLabel} ({d.label})
+              </option>
+            ))}
           </select>
 
           {/* Date Presets */}
@@ -534,21 +558,23 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
 
                 {/* Disciplines: compact or split */}
                 {disciplineViewMode === 'compact' ? (
-                  <th className="p-3 min-w-[200px]">
+                  <th className="p-3 min-w-[220px]">
                     <span>Engineering Disciplines</span>
                     <span className="block text-[10px] text-slate-400 font-normal">
-                      EE · Pl · St · Arch · ECE · ME · Others
+                      EE · Pl · St · Arch · ECE · ME · Solar/Elec · Others
                     </span>
                   </th>
                 ) : (
                   <>
-                    <th className="p-3 whitespace-nowrap bg-slate-800/60">EE</th>
-                    <th className="p-3 whitespace-nowrap bg-slate-800/60">Pl</th>
-                    <th className="p-3 whitespace-nowrap bg-slate-800/60">St</th>
-                    <th className="p-3 whitespace-nowrap bg-slate-800/60">Arch</th>
-                    <th className="p-3 whitespace-nowrap bg-slate-800/60">ECE</th>
-                    <th className="p-3 whitespace-nowrap bg-slate-800/60">ME</th>
-                    <th className="p-3 whitespace-nowrap bg-slate-800/60">Others</th>
+                    {DISCIPLINES.map((d) => (
+                      <th
+                        key={d.key}
+                        className="p-3 whitespace-nowrap bg-slate-800/60"
+                        title={d.label}
+                      >
+                        {d.shortLabel}
+                      </th>
+                    ))}
                   </>
                 )}
 
@@ -605,7 +631,7 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
             <tbody className="divide-y divide-slate-200">
               {filteredTransactions.length === 0 ? (
                 <tr>
-                  <td colSpan={disciplineViewMode === 'compact' ? 12 : 18} className="py-12 text-center text-slate-500">
+                  <td colSpan={disciplineViewMode === 'compact' ? 12 : 19} className="py-12 text-center text-slate-500">
                     <p className="text-sm font-medium">No transactions match the selected filters</p>
                     <p className="text-xs text-slate-400 mt-1">Try resetting search filters or record a new transaction.</p>
                   </td>
@@ -648,29 +674,69 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
 
                       {/* Disciplines: Compact or Split */}
                       {disciplineViewMode === 'compact' ? (
-                        <td className="p-3 text-slate-600 max-w-[260px]">
-                          <div className="flex flex-wrap items-center gap-x-2 gap-y-1 text-[11px]">
-                            {t.ee && <span><span className="font-semibold text-slate-800">EE:</span> {t.ee}</span>}
-                            {t.pl && <span><span className="font-semibold text-slate-800">Pl:</span> {t.pl}</span>}
-                            {t.st && <span><span className="font-semibold text-slate-800">St:</span> {t.st}</span>}
-                            {t.arch && <span><span className="font-semibold text-slate-800">Arch:</span> {t.arch}</span>}
-                            {t.ece && <span><span className="font-semibold text-slate-800">ECE:</span> {t.ece}</span>}
-                            {t.me && <span><span className="font-semibold text-slate-800">ME:</span> {t.me}</span>}
-                            {t.others && <span><span className="font-semibold text-slate-800">Oth:</span> {t.others}</span>}
-                            {!t.ee && !t.pl && !t.st && !t.arch && !t.ece && !t.me && !t.others && (
+                        <td className="p-3 text-slate-600 max-w-[280px]">
+                          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-1 text-[11px]">
+                            {DISCIPLINES.filter((d) => hasDisciplineActivity(t, d.key)).map((d) => {
+                              const note = getDisciplineNote(t, d.key).trim();
+                              const fee = getDisciplineFee(t, d.key);
+                              const sub = getDisciplineSubtotal(fee);
+                              const tooltip = [
+                                `${d.label}`,
+                                note ? `Lead: ${note}` : null,
+                                fee.design > 0 ? `Design: ${formatCurrency(fee.design, currency)}` : null,
+                                fee.signAndSeal > 0 ? `Sign & Seal: ${formatCurrency(fee.signAndSeal, currency)}` : null,
+                                fee.printing > 0 ? `Printing: ${formatCurrency(fee.printing, currency)}` : null,
+                              ]
+                                .filter(Boolean)
+                                .join(' | ');
+
+                              return (
+                                <span key={d.key} title={tooltip} className="inline-flex items-center gap-1">
+                                  <span className="font-semibold text-slate-800">{d.shortLabel}:</span>
+                                  {note && <span className="text-slate-600">{note}</span>}
+                                  {sub > 0 && (
+                                    <span className="font-mono text-indigo-700 font-medium">
+                                      {formatCurrency(sub, currency)}
+                                    </span>
+                                  )}
+                                </span>
+                              );
+                            })}
+                            {!DISCIPLINES.some((d) => hasDisciplineActivity(t, d.key)) && (
                               <span className="text-slate-400 italic">None specified</span>
                             )}
                           </div>
                         </td>
                       ) : (
                         <>
-                          <td className="p-3 text-slate-700 whitespace-nowrap">{t.ee || '-'}</td>
-                          <td className="p-3 text-slate-700 whitespace-nowrap">{t.pl || '-'}</td>
-                          <td className="p-3 text-slate-700 whitespace-nowrap">{t.st || '-'}</td>
-                          <td className="p-3 text-slate-700 whitespace-nowrap">{t.arch || '-'}</td>
-                          <td className="p-3 text-slate-700 whitespace-nowrap">{t.ece || '-'}</td>
-                          <td className="p-3 text-slate-700 whitespace-nowrap">{t.me || '-'}</td>
-                          <td className="p-3 text-slate-700 whitespace-nowrap">{t.others || '-'}</td>
+                          {DISCIPLINES.map((d) => {
+                            const note = getDisciplineNote(t, d.key).trim();
+                            const fee = getDisciplineFee(t, d.key);
+                            const sub = getDisciplineSubtotal(fee);
+                            const tooltip = sub > 0
+                              ? `Design: ${formatCurrency(fee.design, currency)} | Sign & Seal: ${formatCurrency(fee.signAndSeal, currency)} | Printing: ${formatCurrency(fee.printing, currency)}`
+                              : note || undefined;
+                            return (
+                              <td
+                                key={d.key}
+                                className="p-3 text-slate-700 whitespace-nowrap"
+                                title={tooltip}
+                              >
+                                {sub > 0 ? (
+                                  <div>
+                                    <div className="font-mono font-semibold text-slate-900">
+                                      {formatCurrency(sub, currency)}
+                                    </div>
+                                    {note && (
+                                      <div className="text-[10px] text-slate-500">{note}</div>
+                                    )}
+                                  </div>
+                                ) : (
+                                  note || '-'
+                                )}
+                              </td>
+                            );
+                          })}
                         </>
                       )}
 
@@ -799,13 +865,9 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
                     </td>
                   ) : (
                     <>
-                      <td className="p-3">-</td>
-                      <td className="p-3">-</td>
-                      <td className="p-3">-</td>
-                      <td className="p-3">-</td>
-                      <td className="p-3">-</td>
-                      <td className="p-3">-</td>
-                      <td className="p-3">-</td>
+                      {DISCIPLINES.map((d) => (
+                        <td key={d.key} className="p-3">-</td>
+                      ))}
                     </>
                   )}
 

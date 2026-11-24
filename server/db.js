@@ -39,9 +39,47 @@ const DEFAULT_USERS = [
 
 const DEFAULT_TRANSACTIONS = [];
 
+const ALLOWED_DISCIPLINE_KEYS = ['ee', 'pl', 'st', 'arch', 'ece', 'me', 'solarElectrical', 'others'];
+
+function toSafeNonNegativeAmount(val) {
+  const n = Number(val);
+  if (!Number.isFinite(n) || n < 0) return 0;
+  return Number(n.toFixed(2));
+}
+
+function sanitizeDisciplineFees(raw) {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) {
+    return {};
+  }
+  const clean = {};
+  for (const key of ALLOWED_DISCIPLINE_KEYS) {
+    const entry = raw[key];
+    if (entry && typeof entry === 'object' && !Array.isArray(entry)) {
+      const design = toSafeNonNegativeAmount(entry.design);
+      const signAndSeal = toSafeNonNegativeAmount(entry.signAndSeal);
+      const printing = toSafeNonNegativeAmount(entry.printing);
+      if (design > 0 || signAndSeal > 0 || printing > 0) {
+        clean[key] = { design, signAndSeal, printing };
+      }
+    }
+  }
+  return clean;
+}
+
 // Helper: map DB row to Transaction object
 function rowToTransaction(r) {
   if (!r) return null;
+  let parsedFees = {};
+  if (r.discipline_fees && typeof r.discipline_fees === 'object') {
+    parsedFees = sanitizeDisciplineFees(r.discipline_fees);
+  } else if (typeof r.discipline_fees === 'string') {
+    try {
+      parsedFees = sanitizeDisciplineFees(JSON.parse(r.discipline_fees));
+    } catch {
+      parsedFees = {};
+    }
+  }
+
   return {
     id: r.id,
     date: r.date || '',
@@ -53,7 +91,9 @@ function rowToTransaction(r) {
     arch: r.arch || '',
     ece: r.ece || '',
     me: r.me || '',
+    solarElectrical: r.solar_electrical || '',
     others: r.others || '',
+    disciplineFees: parsedFees,
     purpose: r.purpose || '',
     bill: parseFloat(r.bill) || 0,
     printCost: parseFloat(r.print_cost) || 0,
@@ -206,7 +246,9 @@ class Database {
             arch VARCHAR(255),
             ece VARCHAR(255),
             me VARCHAR(255),
+            solar_electrical VARCHAR(255),
             others TEXT,
+            discipline_fees JSONB DEFAULT '{}'::jsonb,
             purpose TEXT,
             bill NUMERIC(14,2) DEFAULT 0,
             print_cost NUMERIC(14,2) DEFAULT 0,
@@ -221,6 +263,9 @@ class Database {
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW()
           );
+
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS solar_electrical VARCHAR(255);
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS discipline_fees JSONB DEFAULT '{}'::jsonb;
 
           CREATE TABLE IF NOT EXISTS company_profile (
             id INT PRIMARY KEY DEFAULT 1,
@@ -269,14 +314,15 @@ class Database {
           for (const t of DEFAULT_TRANSACTIONS) {
             await client.query(
               `INSERT INTO transactions (
-                id, date, client, project_name, ee, pl, st, arch, ece, me, others,
-                purpose, bill, print_cost, total_bill, payment_status, amount_paid,
+                id, date, client, project_name, ee, pl, st, arch, ece, me, solar_electrical, others,
+                discipline_fees, purpose, bill, print_cost, total_bill, payment_status, amount_paid,
                 balance, payment_date, payment_method, payment_reference, remarks,
                 created_at, updated_at
-              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
               ON CONFLICT (id) DO NOTHING`,
               [
-                t.id, t.date, t.client, t.projectName, t.ee, t.pl, t.st, t.arch, t.ece, t.me, t.others,
+                t.id, t.date, t.client, t.projectName, t.ee, t.pl, t.st, t.arch, t.ece, t.me, t.solarElectrical || '', t.others,
+                JSON.stringify(sanitizeDisciplineFees(t.disciplineFees)),
                 t.purpose, t.bill, t.printCost, t.totalBill, t.paymentStatus, t.amountPaid,
                 t.balance, t.paymentDate || null, t.paymentMethod || null, t.paymentReference || null, t.remarks || null,
                 t.createdAt, t.updatedAt
@@ -355,9 +401,14 @@ class Database {
           params.push(query.status);
         }
 
+        if (query.client && query.client !== 'ALL') {
+          sql += ` AND LOWER(client) = LOWER($${paramIdx++})`;
+          params.push(query.client);
+        }
+
         if (query.search) {
           const q = `%${query.search.toLowerCase()}%`;
-          sql += ` AND (LOWER(client) LIKE $${paramIdx} OR LOWER(project_name) LIKE $${paramIdx} OR LOWER(id) LIKE $${paramIdx} OR LOWER(purpose) LIKE $${paramIdx})`;
+          sql += ` AND (LOWER(client) LIKE $${paramIdx} OR LOWER(project_name) LIKE $${paramIdx} OR LOWER(id) LIKE $${paramIdx} OR LOWER(purpose) LIKE $${paramIdx} OR LOWER(COALESCE(solar_electrical, '')) LIKE $${paramIdx})`;
           params.push(q);
           paramIdx++;
         }
@@ -375,13 +426,18 @@ class Database {
     if (query.status && query.status !== 'All') {
       result = result.filter(t => t.paymentStatus.toLowerCase() === query.status.toLowerCase());
     }
+    if (query.client && query.client !== 'ALL') {
+      const targetClient = String(query.client).toLowerCase();
+      result = result.filter(t => t.client && t.client.toLowerCase() === targetClient);
+    }
     if (query.search) {
       const q = query.search.toLowerCase();
       result = result.filter(t =>
         (t.client && t.client.toLowerCase().includes(q)) ||
         (t.projectName && t.projectName.toLowerCase().includes(q)) ||
         (t.id && t.id.toLowerCase().includes(q)) ||
-        (t.purpose && t.purpose.toLowerCase().includes(q))
+        (t.purpose && t.purpose.toLowerCase().includes(q)) ||
+        (t.solarElectrical && t.solarElectrical.toLowerCase().includes(q))
       );
     }
     return result;
@@ -404,11 +460,29 @@ class Database {
 
   async createTransaction(txData) {
     const id = txData.id || `TRX-${new Date().getFullYear()}-${String(this.data.transactions.length + 1).padStart(3, '0')}`;
-    const bill = Number(txData.bill) || 0;
-    const printCost = Number(txData.printCost) || 0;
-    const totalBill = bill + printCost;
-    const amountPaid = Number(txData.amountPaid) || 0;
-    const balance = Math.max(0, totalBill - amountPaid);
+    const disciplineFees = sanitizeDisciplineFees(txData.disciplineFees);
+
+    let feeDesign = 0;
+    let feeSignSeal = 0;
+    let feePrinting = 0;
+    for (const key of ALLOWED_DISCIPLINE_KEYS) {
+      if (disciplineFees[key]) {
+        feeDesign += disciplineFees[key].design;
+        feeSignSeal += disciplineFees[key].signAndSeal;
+        feePrinting += disciplineFees[key].printing;
+      }
+    }
+    const hasStructuredFees = feeDesign + feeSignSeal + feePrinting > 0;
+
+    const bill = hasStructuredFees
+      ? Number((feeDesign + feeSignSeal).toFixed(2))
+      : toSafeNonNegativeAmount(txData.bill);
+    const printCost = hasStructuredFees
+      ? Number(feePrinting.toFixed(2))
+      : toSafeNonNegativeAmount(txData.printCost);
+    const totalBill = Number((bill + printCost).toFixed(2));
+    const amountPaid = toSafeNonNegativeAmount(txData.amountPaid);
+    const balance = Math.max(0, Number((totalBill - amountPaid).toFixed(2)));
     
     let paymentStatus = txData.paymentStatus || 'Pending';
     if (amountPaid >= totalBill && totalBill > 0) {
@@ -421,6 +495,15 @@ class Database {
     const newTx = {
       ...txData,
       id,
+      ee: typeof txData.ee === 'string' ? txData.ee.trim() : '',
+      pl: typeof txData.pl === 'string' ? txData.pl.trim() : '',
+      st: typeof txData.st === 'string' ? txData.st.trim() : '',
+      arch: typeof txData.arch === 'string' ? txData.arch.trim() : '',
+      ece: typeof txData.ece === 'string' ? txData.ece.trim() : '',
+      me: typeof txData.me === 'string' ? txData.me.trim() : '',
+      solarElectrical: typeof txData.solarElectrical === 'string' ? txData.solarElectrical.trim() : '',
+      others: typeof txData.others === 'string' ? txData.others.trim() : '',
+      disciplineFees,
       bill,
       printCost,
       totalBill,
@@ -435,14 +518,15 @@ class Database {
       try {
         await this.pool.query(
           `INSERT INTO transactions (
-            id, date, client, project_name, ee, pl, st, arch, ece, me, others,
-            purpose, bill, print_cost, total_bill, payment_status, amount_paid,
+            id, date, client, project_name, ee, pl, st, arch, ece, me, solar_electrical, others,
+            discipline_fees, purpose, bill, print_cost, total_bill, payment_status, amount_paid,
             balance, payment_date, payment_method, payment_reference, remarks,
             created_at, updated_at
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
           [
             newTx.id, newTx.date || now.split('T')[0], newTx.client, newTx.projectName,
-            newTx.ee || '', newTx.pl || '', newTx.st || '', newTx.arch || '', newTx.ece || '', newTx.me || '', newTx.others || '',
+            newTx.ee, newTx.pl, newTx.st, newTx.arch, newTx.ece, newTx.me, newTx.solarElectrical, newTx.others,
+            JSON.stringify(newTx.disciplineFees),
             newTx.purpose || '', newTx.bill, newTx.printCost, newTx.totalBill, newTx.paymentStatus, newTx.amountPaid,
             newTx.balance, newTx.paymentDate || null, newTx.paymentMethod || null, newTx.paymentReference || null, newTx.remarks || null,
             now, now
@@ -462,11 +546,31 @@ class Database {
     const current = await this.getTransactionById(id);
     if (!current) return null;
 
-    const bill = updateData.bill !== undefined ? Number(updateData.bill) : current.bill;
-    const printCost = updateData.printCost !== undefined ? Number(updateData.printCost) : current.printCost;
-    const totalBill = bill + printCost;
-    const amountPaid = updateData.amountPaid !== undefined ? Number(updateData.amountPaid) : current.amountPaid;
-    const balance = Math.max(0, totalBill - amountPaid);
+    const disciplineFees = updateData.disciplineFees !== undefined
+      ? sanitizeDisciplineFees(updateData.disciplineFees)
+      : sanitizeDisciplineFees(current.disciplineFees);
+
+    let feeDesign = 0;
+    let feeSignSeal = 0;
+    let feePrinting = 0;
+    for (const key of ALLOWED_DISCIPLINE_KEYS) {
+      if (disciplineFees[key]) {
+        feeDesign += disciplineFees[key].design;
+        feeSignSeal += disciplineFees[key].signAndSeal;
+        feePrinting += disciplineFees[key].printing;
+      }
+    }
+    const hasStructuredFees = feeDesign + feeSignSeal + feePrinting > 0;
+
+    const bill = hasStructuredFees
+      ? Number((feeDesign + feeSignSeal).toFixed(2))
+      : (updateData.bill !== undefined ? toSafeNonNegativeAmount(updateData.bill) : current.bill);
+    const printCost = hasStructuredFees
+      ? Number(feePrinting.toFixed(2))
+      : (updateData.printCost !== undefined ? toSafeNonNegativeAmount(updateData.printCost) : current.printCost);
+    const totalBill = Number((bill + printCost).toFixed(2));
+    const amountPaid = updateData.amountPaid !== undefined ? toSafeNonNegativeAmount(updateData.amountPaid) : current.amountPaid;
+    const balance = Math.max(0, Number((totalBill - amountPaid).toFixed(2)));
     
     let paymentStatus = updateData.paymentStatus || current.paymentStatus;
     if (amountPaid >= totalBill && totalBill > 0) {
@@ -480,6 +584,10 @@ class Database {
       ...current,
       ...updateData,
       id,
+      solarElectrical: updateData.solarElectrical !== undefined
+        ? String(updateData.solarElectrical || '').trim()
+        : (current.solarElectrical || ''),
+      disciplineFees,
       bill,
       printCost,
       totalBill,
@@ -494,14 +602,15 @@ class Database {
         await this.pool.query(
           `UPDATE transactions SET
             date = $1, client = $2, project_name = $3, ee = $4, pl = $5, st = $6,
-            arch = $7, ece = $8, me = $9, others = $10, purpose = $11, bill = $12,
-            print_cost = $13, total_bill = $14, payment_status = $15, amount_paid = $16,
-            balance = $17, payment_date = $18, payment_method = $19, payment_reference = $20,
-            remarks = $21, updated_at = $22
-          WHERE id = $23`,
+            arch = $7, ece = $8, me = $9, solar_electrical = $10, others = $11, discipline_fees = $12,
+            purpose = $13, bill = $14, print_cost = $15, total_bill = $16, payment_status = $17,
+            amount_paid = $18, balance = $19, payment_date = $20, payment_method = $21,
+            payment_reference = $22, remarks = $23, updated_at = $24
+          WHERE id = $25`,
           [
             updated.date, updated.client, updated.projectName, updated.ee, updated.pl, updated.st,
-            updated.arch, updated.ece, updated.me, updated.others, updated.purpose, updated.bill,
+            updated.arch, updated.ece, updated.me, updated.solarElectrical, updated.others,
+            JSON.stringify(updated.disciplineFees), updated.purpose, updated.bill,
             updated.printCost, updated.totalBill, updated.paymentStatus, updated.amountPaid,
             updated.balance, updated.paymentDate || null, updated.paymentMethod || null, updated.paymentReference || null,
             updated.remarks || null, now, id
@@ -924,13 +1033,14 @@ class Database {
           for (const t of txs) {
             await client.query(
               `INSERT INTO transactions (
-                id, date, client, project_name, ee, pl, st, arch, ece, me, others,
-                purpose, bill, print_cost, total_bill, payment_status, amount_paid,
+                id, date, client, project_name, ee, pl, st, arch, ece, me, solar_electrical, others,
+                discipline_fees, purpose, bill, print_cost, total_bill, payment_status, amount_paid,
                 balance, payment_date, payment_method, payment_reference, remarks,
                 created_at, updated_at
-              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
               [
-                t.id, t.date, t.client, t.projectName, t.ee || '', t.pl || '', t.st || '', t.arch || '', t.ece || '', t.me || '', t.others || '',
+                t.id, t.date, t.client, t.projectName, t.ee || '', t.pl || '', t.st || '', t.arch || '', t.ece || '', t.me || '', t.solarElectrical || '', t.others || '',
+                JSON.stringify(sanitizeDisciplineFees(t.disciplineFees)),
                 t.purpose || '', t.bill || 0, t.printCost || 0, t.totalBill || 0, t.paymentStatus || 'Pending', t.amountPaid || 0,
                 t.balance || 0, t.paymentDate || null, t.paymentMethod || null, t.paymentReference || null, t.remarks || null,
                 t.createdAt || new Date().toISOString(), t.updatedAt || new Date().toISOString()
@@ -1001,13 +1111,14 @@ class Database {
           for (const t of DEFAULT_TRANSACTIONS) {
             await client.query(
               `INSERT INTO transactions (
-                id, date, client, project_name, ee, pl, st, arch, ece, me, others,
-                purpose, bill, print_cost, total_bill, payment_status, amount_paid,
+                id, date, client, project_name, ee, pl, st, arch, ece, me, solar_electrical, others,
+                discipline_fees, purpose, bill, print_cost, total_bill, payment_status, amount_paid,
                 balance, payment_date, payment_method, payment_reference, remarks,
                 created_at, updated_at
-              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24)`,
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
               [
-                t.id, t.date, t.client, t.projectName, t.ee, t.pl, t.st, t.arch, t.ece, t.me, t.others,
+                t.id, t.date, t.client, t.projectName, t.ee, t.pl, t.st, t.arch, t.ece, t.me, t.solarElectrical || '', t.others,
+                JSON.stringify(sanitizeDisciplineFees(t.disciplineFees)),
                 t.purpose, t.bill, t.printCost, t.totalBill, t.paymentStatus, t.amountPaid,
                 t.balance, t.paymentDate || null, t.paymentMethod || null, t.paymentReference || null, t.remarks || null,
                 t.createdAt, t.updatedAt

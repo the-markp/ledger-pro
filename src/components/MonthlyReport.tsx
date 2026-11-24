@@ -11,7 +11,16 @@ import {
   TrendingUp, 
   PieChart 
 } from 'lucide-react';
-import { Transaction, Currency, CompanyProfile } from '../types/transaction';
+import {
+  Transaction,
+  Currency,
+  CompanyProfile,
+  DISCIPLINES,
+  getDisciplineFee,
+  getDisciplineSubtotal,
+  getDisciplineNote,
+  hasDisciplineActivity,
+} from '../types/transaction';
 import { User } from '../types/auth';
 import { formatCurrency, formatDate, getMonthDetails } from '../utils/formatters';
 import { exportTransactionsToExcel, exportTransactionsToPdf } from '../utils/exportUtils';
@@ -73,6 +82,7 @@ export const MonthlyReport: React.FC<MonthlyReportProps> = ({
             Arch: 0,
             ECE: 0,
             ME: 0,
+            'Solar/Elec': 0,
             Others: 0,
           },
         });
@@ -95,14 +105,12 @@ export const MonthlyReport: React.FC<MonthlyReportProps> = ({
       grp.clientBreakdown[t.client].printCost += t.printCost || 0;
       grp.clientBreakdown[t.client].count += 1;
 
-      // Disciplines
-      if (t.ee) grp.disciplineBreakdown.EE += 1;
-      if (t.pl) grp.disciplineBreakdown.Pl += 1;
-      if (t.st) grp.disciplineBreakdown.St += 1;
-      if (t.arch) grp.disciplineBreakdown.Arch += 1;
-      if (t.ece) grp.disciplineBreakdown.ECE += 1;
-      if (t.me) grp.disciplineBreakdown.ME += 1;
-      if (t.others) grp.disciplineBreakdown.Others += 1;
+      // Disciplines (notes or structured fee charges)
+      DISCIPLINES.forEach((d) => {
+        if (hasDisciplineActivity(t, d.key)) {
+          grp.disciplineBreakdown[d.shortLabel] = (grp.disciplineBreakdown[d.shortLabel] || 0) + 1;
+        }
+      });
     });
 
     return Array.from(map.values()).sort((a, b) => b.monthKey.localeCompare(a.monthKey));
@@ -323,15 +331,9 @@ export const MonthlyReport: React.FC<MonthlyReportProps> = ({
             </div>
 
             <div className="space-y-2.5">
-              {[
-                { key: 'EE', name: 'Electrical Engineering', count: currentMonthData.disciplineBreakdown.EE },
-                { key: 'Pl', name: 'Plumbing Engineering', count: currentMonthData.disciplineBreakdown.Pl },
-                { key: 'St', name: 'Structural Engineering', count: currentMonthData.disciplineBreakdown.St },
-                { key: 'Arch', name: 'Architectural Design', count: currentMonthData.disciplineBreakdown.Arch },
-                { key: 'ECE', name: 'Electronics & Comms', count: currentMonthData.disciplineBreakdown.ECE },
-                { key: 'ME', name: 'Mechanical Engineering', count: currentMonthData.disciplineBreakdown.ME },
-                { key: 'Others', name: 'Other Specialists', count: currentMonthData.disciplineBreakdown.Others },
-              ].map((item) => {
+              {DISCIPLINES.map((d) => {
+                const count = currentMonthData.disciplineBreakdown[d.shortLabel] || 0;
+                const item = { key: d.shortLabel, name: d.label, count };
                 const totalProj = currentMonthData.transactions.length || 1;
                 const pct = (item.count / totalProj) * 100;
 
@@ -401,16 +403,15 @@ export const MonthlyReport: React.FC<MonthlyReportProps> = ({
                   <td className="p-2.5 whitespace-nowrap font-mono text-slate-700">{formatDate(t.date)}</td>
                   <td className="p-2.5 font-medium text-slate-900 whitespace-nowrap">{t.client}</td>
                   <td className="p-2.5 text-slate-800 max-w-[160px] truncate">{t.projectName}</td>
-                  <td className="p-2.5 text-[11px] text-slate-600 max-w-[160px] truncate">
-                    {[
-                      t.ee ? `EE: ${t.ee}` : null,
-                      t.pl ? `Pl: ${t.pl}` : null,
-                      t.st ? `St: ${t.st}` : null,
-                      t.arch ? `Arch: ${t.arch}` : null,
-                      t.ece ? `ECE: ${t.ece}` : null,
-                      t.me ? `ME: ${t.me}` : null,
-                      t.others ? `Oth: ${t.others}` : null,
-                    ].filter(Boolean).join(' · ') || '-'}
+                  <td className="p-2.5 text-[11px] text-slate-600 max-w-[180px] truncate">
+                    {DISCIPLINES.filter((d) => hasDisciplineActivity(t, d.key))
+                      .map((d) => {
+                        const note = getDisciplineNote(t, d.key).trim();
+                        const sub = getDisciplineSubtotal(getDisciplineFee(t, d.key));
+                        if (sub > 0) return `${d.shortLabel}: ${formatCurrency(sub, currency)}`;
+                        return `${d.shortLabel}: ${note}`;
+                      })
+                      .join(' · ') || '-'}
                   </td>
                   <td className="p-2.5 max-w-[160px] text-slate-700 truncate">{t.purpose}</td>
                   <td className="p-2.5 text-right font-mono text-slate-700">{formatCurrency(t.bill, currency)}</td>

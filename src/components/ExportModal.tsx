@@ -1,5 +1,5 @@
 import React, { useState } from 'react';
-import { X, FileSpreadsheet, FileText, Download, CheckCircle2 } from 'lucide-react';
+import { X, FileSpreadsheet, FileText, Download, Receipt } from 'lucide-react';
 import { Transaction, Currency, CompanyProfile } from '../types/transaction';
 import { exportTransactionsToExcel, exportTransactionsToPdf } from '../utils/exportUtils';
 
@@ -9,6 +9,7 @@ interface ExportModalProps {
   transactions: Transaction[];
   currency: Currency;
   companyProfile: CompanyProfile;
+  onOpenClientStatement?: () => void;
 }
 
 export const ExportModal: React.FC<ExportModalProps> = ({
@@ -17,6 +18,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
   transactions,
   currency,
   companyProfile,
+  onOpenClientStatement,
 }) => {
   const [format, setFormat] = useState<'excel' | 'pdf'>('excel');
   const [scope, setScope] = useState<'all' | 'paid' | 'unpaid' | 'current_month'>('all');
@@ -156,11 +158,27 @@ export const ExportModal: React.FC<ExportModalProps> = ({
               <span>Records to export:</span>
               <span className="font-mono font-bold text-slate-900">{targetTransactions.length}</span>
             </div>
-            <div className="flex justify-between">
-              <span>Included columns:</span>
-              <span className="text-slate-700">Date, Client, Project, EE, Pl, St, Arch, ECE, ME, Others, Purpose, Bill, Print Cost, Total Bill, Status, Remarks</span>
+            <div className="flex justify-between gap-2">
+              <span className="shrink-0">Included columns:</span>
+              <span className="text-slate-700 text-right">
+                Date, Client, Project, EE, Pl, St, Arch, ECE, ME, Solar/Electrical Installation, Others (Design / Sign &amp; Seal / Printing), Purpose, Bill, Print Cost, Total Bill, Status, Remarks
+              </span>
             </div>
           </div>
+
+          {onOpenClientStatement && (
+            <button
+              type="button"
+              onClick={() => {
+                onClose();
+                onOpenClientStatement();
+              }}
+              className="w-full p-2.5 rounded-lg border border-amber-300 bg-amber-50 hover:bg-amber-100 text-amber-900 font-medium flex items-center justify-center gap-2 transition-colors"
+            >
+              <Receipt className="w-4 h-4 text-amber-700" />
+              <span>Need a Statement of Account for a specific client? Open Client SOA</span>
+            </button>
+          )}
 
           {/* Footer Controls */}
           <div className="pt-3 border-t border-slate-200 flex items-center justify-end gap-2">

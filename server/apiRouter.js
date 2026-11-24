@@ -123,8 +123,8 @@ apiRouter.put('/users/:id/pin', async (req, res) => {
 // 4. Transactions API
 apiRouter.get('/transactions', async (req, res) => {
   try {
-    const { status, search } = req.query;
-    const list = await db.getTransactions({ status, search });
+    const { status, search, client } = req.query;
+    const list = await db.getTransactions({ status, search, client });
     res.json(list);
   } catch (err) {
     res.status(500).json({ error: err.message });
@@ -145,11 +145,17 @@ apiRouter.get('/transactions/:id', async (req, res) => {
 
 apiRouter.post('/transactions', async (req, res) => {
   try {
-    const { client, projectName, bill } = req.body || {};
-    if (!client || !projectName || bill === undefined) {
-      return res.status(400).json({ error: 'Client, Project Name, and Bill amount are required' });
+    const { client, projectName, bill, disciplineFees } = req.body || {};
+    const cleanClient = typeof client === 'string' ? client.trim() : '';
+    const cleanProject = typeof projectName === 'string' ? projectName.trim() : '';
+    if (!cleanClient || !cleanProject || (bill === undefined && !disciplineFees)) {
+      return res.status(400).json({ error: 'Client, Project Name, and billing amounts are required' });
     }
-    const newTx = await db.createTransaction(req.body);
+    const newTx = await db.createTransaction({
+      ...req.body,
+      client: cleanClient,
+      projectName: cleanProject,
+    });
     res.status(201).json(newTx);
   } catch (err) {
     res.status(500).json({ error: err.message });

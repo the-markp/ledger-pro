@@ -12,7 +12,16 @@ import {
   CheckCircle2, 
   Clock 
 } from 'lucide-react';
-import { Transaction, Currency, CompanyProfile } from '../types/transaction';
+import {
+  Transaction,
+  Currency,
+  CompanyProfile,
+  DISCIPLINES,
+  getDisciplineFee,
+  getDisciplineSubtotal,
+  getDisciplineNote,
+  hasDisciplineActivity,
+} from '../types/transaction';
 import { User } from '../types/auth';
 import { formatCurrency, formatDate, getWeekDetails } from '../utils/formatters';
 import { exportTransactionsToExcel, exportTransactionsToPdf } from '../utils/exportUtils';
@@ -78,6 +87,7 @@ export const WeeklyReport: React.FC<WeeklyReportProps> = ({
             Arch: 0,
             ECE: 0,
             ME: 0,
+            'Solar/Elec': 0,
             Others: 0,
           },
           clientSpending: {},
@@ -92,14 +102,12 @@ export const WeeklyReport: React.FC<WeeklyReportProps> = ({
       grp.totalPaid += t.amountPaid || 0;
       grp.totalBalance += t.balance || 0;
 
-      // Track disciplines
-      if (t.ee) grp.disciplineCounts.EE += 1;
-      if (t.pl) grp.disciplineCounts.Pl += 1;
-      if (t.st) grp.disciplineCounts.St += 1;
-      if (t.arch) grp.disciplineCounts.Arch += 1;
-      if (t.ece) grp.disciplineCounts.ECE += 1;
-      if (t.me) grp.disciplineCounts.ME += 1;
-      if (t.others) grp.disciplineCounts.Others += 1;
+      // Track disciplines (notes or sub-field charges)
+      DISCIPLINES.forEach((d) => {
+        if (hasDisciplineActivity(t, d.key)) {
+          grp.disciplineCounts[d.shortLabel] = (grp.disciplineCounts[d.shortLabel] || 0) + 1;
+        }
+      });
 
       // Track client spending
       grp.clientSpending[t.client] = (grp.clientSpending[t.client] || 0) + (t.totalBill || 0);
@@ -402,16 +410,15 @@ export const WeeklyReport: React.FC<WeeklyReportProps> = ({
                               <div className="font-semibold text-slate-900 truncate">{t.client}</div>
                               <div className="text-[11px] text-slate-500 truncate">{t.projectName}</div>
                             </td>
-                            <td className="p-2.5 text-[11px] text-slate-600 max-w-[180px] truncate">
-                              {[
-                                t.ee ? `EE: ${t.ee}` : null,
-                                t.pl ? `Pl: ${t.pl}` : null,
-                                t.st ? `St: ${t.st}` : null,
-                                t.arch ? `Arch: ${t.arch}` : null,
-                                t.ece ? `ECE: ${t.ece}` : null,
-                                t.me ? `ME: ${t.me}` : null,
-                                t.others ? `Oth: ${t.others}` : null,
-                              ].filter(Boolean).join(' · ') || '-'}
+                            <td className="p-2.5 text-[11px] text-slate-600 max-w-[200px] truncate">
+                              {DISCIPLINES.filter((d) => hasDisciplineActivity(t, d.key))
+                                .map((d) => {
+                                  const note = getDisciplineNote(t, d.key).trim();
+                                  const sub = getDisciplineSubtotal(getDisciplineFee(t, d.key));
+                                  if (sub > 0) return `${d.shortLabel}: ${formatCurrency(sub, currency)}`;
+                                  return `${d.shortLabel}: ${note}`;
+                                })
+                                .join(' · ') || '-'}
                             </td>
                             <td className="p-2.5 max-w-[180px] text-slate-700 truncate">{t.purpose}</td>
                             <td className="p-2.5 text-right font-mono text-slate-700">{formatCurrency(t.bill, currency)}</td>

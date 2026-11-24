@@ -1,8 +1,70 @@
 import * as XLSX from 'xlsx';
 import jsPDF from 'jspdf';
 import autoTable from 'jspdf-autotable';
-import { Transaction, Currency, CompanyProfile, DEFAULT_COMPANY_PROFILE } from '../types/transaction';
-import { formatCurrency, formatCurrencyPdf, formatDate, getWeekDetails, getMonthDetails } from './formatters';
+import {
+  Transaction,
+  Currency,
+  CompanyProfile,
+  DEFAULT_COMPANY_PROFILE,
+  DISCIPLINES,
+  DisciplineKey,
+  getDisciplineFee,
+  getDisciplineSubtotal,
+  getDisciplineNote,
+  hasDisciplineActivity,
+  computeTotalsFromDisciplineFees,
+} from '../types/transaction';
+import { formatCurrencyPdf, formatDate } from './formatters';
+
+function sanitizeFileSegment(input: string): string {
+  return (input || 'Report')
+    .trim()
+    .replace(/[^a-zA-Z0-9_-]+/g, '_')
+    .replace(/^_+|_+$/g, '')
+    .slice(0, 60) || 'Report';
+}
+
+function formatDisciplineCellForExport(
+  t: Transaction,
+  key: DisciplineKey,
+  currency: Currency
+): string {
+  const note = getDisciplineNote(t, key).trim();
+  const fee = getDisciplineFee(t, key);
+  const subtotal = getDisciplineSubtotal(fee);
+  if (!note && subtotal === 0) return '-';
+
+  const feeParts: string[] = [];
+  if (fee.design > 0) feeParts.push(`D:${formatCurrencyPdf(fee.design, currency)}`);
+  if (fee.signAndSeal > 0) feeParts.push(`S&S:${formatCurrencyPdf(fee.signAndSeal, currency)}`);
+  if (fee.printing > 0) feeParts.push(`P:${formatCurrencyPdf(fee.printing, currency)}`);
+
+  if (note && feeParts.length > 0) {
+    return `${note} (${feeParts.join(', ')})`;
+  }
+  if (feeParts.length > 0) {
+    return feeParts.join(', ');
+  }
+  return note;
+}
+
+function formatCompactDisciplinesForPdf(t: Transaction, currency: Currency): string {
+  const items: string[] = [];
+  for (const d of DISCIPLINES) {
+    if (!hasDisciplineActivity(t, d.key)) continue;
+    const note = getDisciplineNote(t, d.key).trim();
+    const fee = getDisciplineFee(t, d.key);
+    const sub = getDisciplineSubtotal(fee);
+    if (sub > 0 && note) {
+      items.push(`${d.shortLabel}: ${note} (${formatCurrencyPdf(sub, currency)})`);
+    } else if (sub > 0) {
+      items.push(`${d.shortLabel}: ${formatCurrencyPdf(sub, currency)}`);
+    } else if (note) {
+      items.push(`${d.shortLabel}: ${note}`);
+    }
+  }
+  return items.length > 0 ? items.join(' | ') : '-';
+}
 
 export function exportTransactionsToExcel(
   transactions: Transaction[],
@@ -10,19 +72,19 @@ export function exportTransactionsToExcel(
   reportTitle: string = 'Transactions_Report',
   companyProfile: CompanyProfile = DEFAULT_COMPANY_PROFILE
 ) {
-  // Format transactions for Excel
   const excelData: Record<string, any>[] = transactions.map((t) => ({
     'Transaction ID': t.id,
     'Date': t.date,
     'Client': t.client,
     'Project Name': t.projectName,
-    'EE': t.ee || '-',
-    'Pl': t.pl || '-',
-    'St': t.st || '-',
-    'Arch': t.arch || '-',
-    'ECE': t.ece || '-',
-    'ME': t.me || '-',
-    'Others': t.others || '-',
+    'EE': formatDisciplineCellForExport(t, 'ee', currency),
+    'Pl': formatDisciplineCellForExport(t, 'pl', currency),
+    'St': formatDisciplineCellForExport(t, 'st', currency),
+    'Arch': formatDisciplineCellForExport(t, 'arch', currency),
+    'ECE': formatDisciplineCellForExport(t, 'ece', currency),
+    'ME': formatDisciplineCellForExport(t, 'me', currency),
+    'Solar/Electrical Installation': formatDisciplineCellForExport(t, 'solarElectrical', currency),
+    'Others': formatDisciplineCellForExport(t, 'others', currency),
     'Purpose': t.purpose,
     'Bill Amount': t.bill,
     'Print Cost': t.printCost,
@@ -35,18 +97,16 @@ export function exportTransactionsToExcel(
     'Remarks': t.remarks || '-',
   }));
 
-  // Calculate totals
   const totalBill = transactions.reduce((sum, t) => sum + (t.bill || 0), 0);
   const totalPrintCost = transactions.reduce((sum, t) => sum + (t.printCost || 0), 0);
   const grandTotal = transactions.reduce((sum, t) => sum + (t.totalBill || 0), 0);
   const totalPaid = transactions.reduce((sum, t) => sum + (t.amountPaid || 0), 0);
   const totalBalance = transactions.reduce((sum, t) => sum + (t.balance || 0), 0);
 
-  // Add summary total row
   excelData.push({
     'Transaction ID': 'TOTALS',
     'Date': `${transactions.length} records`,
-    'Client': '',
+    'Client': companyProfile.companyName || '',
     'Project Name': '',
     'EE': '',
     'Pl': '',
@@ -54,6 +114,7 @@ export function exportTransactionsToExcel(
     'Arch': '',
     'ECE': '',
     'ME': '',
+    'Solar/Electrical Installation': '',
     'Others': '',
     'Purpose': 'GRAND TOTALS',
     'Bill Amount': totalBill,
@@ -70,19 +131,19 @@ export function exportTransactionsToExcel(
   const workbook = XLSX.utils.book_new();
   const worksheet = XLSX.utils.json_to_sheet(excelData);
 
-  // Set column widths
-  const colWidths = [
+  worksheet['!cols'] = [
     { wch: 14 }, // ID
     { wch: 12 }, // Date
     { wch: 22 }, // Client
     { wch: 26 }, // Project Name
-    { wch: 18 }, // EE
-    { wch: 18 }, // Pl
-    { wch: 18 }, // St
-    { wch: 18 }, // Arch
-    { wch: 18 }, // ECE
-    { wch: 18 }, // ME
-    { wch: 18 }, // Others
+    { wch: 22 }, // EE
+    { wch: 22 }, // Pl
+    { wch: 22 }, // St
+    { wch: 22 }, // Arch
+    { wch: 22 }, // ECE
+    { wch: 22 }, // ME
+    { wch: 26 }, // Solar/Electrical Installation
+    { wch: 22 }, // Others
     { wch: 30 }, // Purpose
     { wch: 14 }, // Bill Amount
     { wch: 12 }, // Print Cost
@@ -94,12 +155,14 @@ export function exportTransactionsToExcel(
     { wch: 24 }, // Method
     { wch: 32 }, // Remarks
   ];
-  worksheet['!cols'] = colWidths;
 
   XLSX.utils.book_append_sheet(workbook, worksheet, 'Transactions');
 
-  // Sheet 2: Executive Summary & Client Spending breakdown
-  const clientBreakdown: Record<string, { count: number; bill: number; printCost: number; total: number; paid: number; balance: number }> = {};
+  // Sheet 2: Client Summary
+  const clientBreakdown: Record<
+    string,
+    { count: number; bill: number; printCost: number; total: number; paid: number; balance: number }
+  > = {};
   transactions.forEach((t) => {
     if (!clientBreakdown[t.client]) {
       clientBreakdown[t.client] = { count: 0, bill: 0, printCost: 0, total: 0, paid: 0, balance: 0 };
@@ -134,8 +197,47 @@ export function exportTransactionsToExcel(
   ];
   XLSX.utils.book_append_sheet(workbook, summarySheet, 'Client Summary');
 
+  // Sheet 3: Discipline Fee Breakdown (Design / Sign & Seal / Printing)
+  const disciplineRows: Record<string, any>[] = [];
+  transactions.forEach((t) => {
+    DISCIPLINES.forEach((d) => {
+      if (!hasDisciplineActivity(t, d.key)) return;
+      const fee = getDisciplineFee(t, d.key);
+      const subtotal = getDisciplineSubtotal(fee);
+      disciplineRows.push({
+        'Transaction ID': t.id,
+        'Date': t.date,
+        'Client': t.client,
+        'Project Name': t.projectName,
+        'Discipline': d.label,
+        'Lead / Notes': getDisciplineNote(t, d.key) || '-',
+        'Design': fee.design,
+        'Sign & Seal': fee.signAndSeal,
+        'Printing': fee.printing,
+        'Discipline Subtotal': subtotal,
+      });
+    });
+  });
+
+  if (disciplineRows.length > 0) {
+    const discSheet = XLSX.utils.json_to_sheet(disciplineRows);
+    discSheet['!cols'] = [
+      { wch: 14 },
+      { wch: 12 },
+      { wch: 22 },
+      { wch: 26 },
+      { wch: 28 },
+      { wch: 20 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 16 },
+    ];
+    XLSX.utils.book_append_sheet(workbook, discSheet, 'Discipline Breakdown');
+  }
+
   const dateStr = new Date().toISOString().split('T')[0];
-  XLSX.writeFile(workbook, `${reportTitle}_${dateStr}.xlsx`);
+  XLSX.writeFile(workbook, `${sanitizeFileSegment(reportTitle)}_${dateStr}.xlsx`);
 }
 
 export function exportTransactionsToPdf(
@@ -145,7 +247,6 @@ export function exportTransactionsToPdf(
   filterSubtitle: string = 'All Records',
   companyProfile: CompanyProfile = DEFAULT_COMPANY_PROFILE
 ) {
-  // Use Landscape for complete horizontal space
   const doc = new jsPDF({
     orientation: 'landscape',
     unit: 'pt',
@@ -156,7 +257,7 @@ export function exportTransactionsToPdf(
   const pageHeight = doc.internal.pageSize.getHeight();
 
   // Header banner
-  doc.setFillColor(15, 23, 42); // slate-900
+  doc.setFillColor(15, 23, 42);
   doc.rect(0, 0, pageWidth, 58, 'F');
 
   let textLeft = 30;
@@ -166,13 +267,11 @@ export function exportTransactionsToPdf(
       doc.roundedRect(30, 8, 42, 42, 3, 3, 'F');
       doc.addImage(companyProfile.logoUrl, 'PNG', 32, 10, 38, 38);
       textLeft = 82;
-    } catch (e) {
-      // fallback to text only if image parsing fails
+    } catch {
       textLeft = 30;
     }
   }
 
-  // Title text with Company Name
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
@@ -181,7 +280,7 @@ export function exportTransactionsToPdf(
 
   doc.setFontSize(8.5);
   doc.setFont('helvetica', 'normal');
-  doc.setTextColor(203, 213, 225); // slate-300
+  doc.setTextColor(203, 213, 225);
   const printTimestamp = new Date().toLocaleString();
   doc.text(
     `Generated: ${printTimestamp} | Scope: ${filterSubtitle} | ${companyProfile.contactInfo || companyProfile.tagline}`,
@@ -223,38 +322,24 @@ export function exportTransactionsToPdf(
     doc.text(card.val, x + 8, startY + 31);
   });
 
-  // Data Table
   const tableHeaders = [
-    ['Date', 'Client', 'Project Name', 'Disciplines (EE/Pl/St/Arch/ECE/ME/Oth)', 'Purpose', 'Bill', 'Print Cost', 'Total Bill', 'Status', 'Paid', 'Balance']
+    ['Date', 'Client', 'Project Name', 'Disciplines (incl. Solar/Elec)', 'Purpose', 'Bill', 'Print Cost', 'Total Bill', 'Status', 'Paid', 'Balance']
   ];
 
-  const tableRows = transactions.map((t) => {
-    const discList = [
-      t.ee ? `EE: ${t.ee}` : null,
-      t.pl ? `Pl: ${t.pl}` : null,
-      t.st ? `St: ${t.st}` : null,
-      t.arch ? `Arch: ${t.arch}` : null,
-      t.ece ? `ECE: ${t.ece}` : null,
-      t.me ? `ME: ${t.me}` : null,
-      t.others ? `Oth: ${t.others}` : null,
-    ].filter(Boolean).join(' | ');
+  const tableRows = transactions.map((t) => [
+    t.date,
+    t.client,
+    t.projectName,
+    formatCompactDisciplinesForPdf(t, currency),
+    t.purpose,
+    formatCurrencyPdf(t.bill, currency),
+    formatCurrencyPdf(t.printCost, currency),
+    formatCurrencyPdf(t.totalBill, currency),
+    t.paymentStatus,
+    formatCurrencyPdf(t.amountPaid, currency),
+    formatCurrencyPdf(t.balance, currency),
+  ]);
 
-    return [
-      t.date,
-      t.client,
-      t.projectName,
-      discList || '-',
-      t.purpose,
-      formatCurrencyPdf(t.bill, currency),
-      formatCurrencyPdf(t.printCost, currency),
-      formatCurrencyPdf(t.totalBill, currency),
-      t.paymentStatus,
-      formatCurrencyPdf(t.amountPaid, currency),
-      formatCurrencyPdf(t.balance, currency),
-    ];
-  });
-
-  // Append Total Row
   tableRows.push([
     'TOTAL',
     `${transactions.length} records`,
@@ -291,26 +376,25 @@ export function exportTransactionsToPdf(
       fillColor: [248, 250, 252],
     },
     columnStyles: {
-      0: { cellWidth: 55 },  // Date
-      1: { cellWidth: 80 },  // Client
-      2: { cellWidth: 85 },  // Project Name
-      3: { cellWidth: 155 }, // Disciplines
-      4: { cellWidth: 105 }, // Purpose
-      5: { cellWidth: 55, halign: 'right' },  // Bill
-      6: { cellWidth: 50, halign: 'right' },  // Print Cost
-      7: { cellWidth: 60, halign: 'right', fontStyle: 'bold' },  // Total Bill
-      8: { cellWidth: 55, halign: 'center' }, // Status
-      9: { cellWidth: 55, halign: 'right' },  // Paid
-      10: { cellWidth: 55, halign: 'right' }, // Balance
+      0: { cellWidth: 55 },
+      1: { cellWidth: 80 },
+      2: { cellWidth: 85 },
+      3: { cellWidth: 155 },
+      4: { cellWidth: 105 },
+      5: { cellWidth: 55, halign: 'right' },
+      6: { cellWidth: 50, halign: 'right' },
+      7: { cellWidth: 60, halign: 'right', fontStyle: 'bold' },
+      8: { cellWidth: 55, halign: 'center' },
+      9: { cellWidth: 55, halign: 'right' },
+      10: { cellWidth: 55, halign: 'right' },
     },
-    didDrawPage: (data) => {
-      // Footer
+    didDrawPage: () => {
       const totalPages = (doc as any).internal.getNumberOfPages();
       const currentPage = (doc as any).internal.getCurrentPageInfo().pageNumber;
       doc.setFontSize(7.5);
       doc.setTextColor(148, 163, 184);
       doc.text(
-        `LedgerPro Financial System — Confidential Document — Page ${currentPage} of ${totalPages}`,
+        `${companyProfile.companyName || 'LedgerPro'} — Confidential Document — Page ${currentPage} of ${totalPages}`,
         30,
         pageHeight - 15
       );
@@ -318,7 +402,7 @@ export function exportTransactionsToPdf(
   });
 
   const fileDate = new Date().toISOString().split('T')[0];
-  doc.save(`${reportTitle.replace(/\s+/g, '_')}_${fileDate}.pdf`);
+  doc.save(`${sanitizeFileSegment(reportTitle)}_${fileDate}.pdf`);
 }
 
 export function exportSingleInvoicePdf(
@@ -333,28 +417,28 @@ export function exportSingleInvoicePdf(
   });
 
   const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
 
   // Header band
-  doc.setFillColor(15, 23, 42); // slate-900
-  doc.rect(0, 0, pageWidth, 80, 'F');
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, pageWidth, 82, 'F');
 
   let textLeft = 35;
   if (companyProfile.logoUrl) {
     try {
       doc.setFillColor(255, 255, 255);
-      doc.roundedRect(35, 12, 54, 54, 4, 4, 'F');
-      doc.addImage(companyProfile.logoUrl, 'PNG', 38, 15, 48, 48);
+      doc.roundedRect(35, 13, 54, 54, 4, 4, 'F');
+      doc.addImage(companyProfile.logoUrl, 'PNG', 38, 16, 48, 48);
       textLeft = 100;
-    } catch (e) {
+    } catch {
       textLeft = 35;
     }
   }
 
-  // Company Name & Slogan
   doc.setTextColor(255, 255, 255);
   doc.setFontSize(14);
   doc.setFont('helvetica', 'bold');
-  doc.text(companyProfile.companyName || 'STATEMENT OF ACCOUNT', textLeft, 28);
+  doc.text(companyProfile.companyName || 'BILLING INVOICE', textLeft, 28);
 
   doc.setFontSize(8);
   doc.setFont('helvetica', 'normal');
@@ -369,13 +453,13 @@ export function exportSingleInvoicePdf(
 
   doc.setFontSize(8);
   doc.setFont('helvetica', 'bold');
-  doc.setTextColor(129, 140, 248); // indigo-400
-  doc.text(`STATEMENT OF ACCOUNT / BILLING INVOICE · Ref: ${t.id}`, textLeft, 68);
+  doc.setTextColor(129, 140, 248);
+  doc.text(`PROJECT BILLING INVOICE · Ref: ${t.id}`, textLeft, 70);
 
   // Meta Section
   doc.setDrawColor(226, 232, 240);
   doc.setFillColor(248, 250, 252);
-  doc.roundedRect(35, 95, pageWidth - 70, 75, 4, 4, 'FD');
+  doc.roundedRect(35, 95, pageWidth - 70, 78, 4, 4, 'FD');
 
   doc.setTextColor(15, 23, 42);
   doc.setFontSize(9);
@@ -392,40 +476,80 @@ export function exportSingleInvoicePdf(
   doc.setFont('helvetica', 'normal');
   doc.text(`Status: ${t.paymentStatus}`, rightColX, 127);
   doc.text(`Payment Date: ${t.paymentDate ? formatDate(t.paymentDate) : 'Pending Settlement'}`, rightColX, 142);
-  doc.text(`Payment Method/Ref: ${[t.paymentMethod, t.paymentReference].filter(Boolean).join(' / ') || 'None'}`, rightColX, 157);
+  doc.text(`Method/Ref: ${[t.paymentMethod, t.paymentReference].filter(Boolean).join(' / ') || 'None'}`, rightColX, 157);
 
-  // Engineering & Architectural Disciplines itemization
+  // Discipline Breakdown Section
   doc.setFont('helvetica', 'bold');
-  doc.setFontSize(11);
+  doc.setFontSize(10.5);
   doc.setTextColor(30, 41, 59);
-  doc.text('ENGINEERING & DESIGN SCOPE', 35, 190);
+  doc.text('ENGINEERING & DESIGN SCOPE BREAKDOWN', 35, 193);
 
-  const discData = [
-    ['Electrical Engineering (EE)', t.ee || 'Not assigned / N/A'],
-    ['Plumbing Engineering (Pl)', t.pl || 'Not assigned / N/A'],
-    ['Structural Engineering (St)', t.st || 'Not assigned / N/A'],
-    ['Architectural Design (Arch)', t.arch || 'Not assigned / N/A'],
-    ['Electronics & Comms (ECE)', t.ece || 'Not assigned / N/A'],
-    ['Mechanical Engineering (ME)', t.me || 'Not assigned / N/A'],
-    ['Other Disciplines / Specialists', t.others || 'None'],
-    ['Purpose / Milestone', t.purpose || '-'],
-  ];
+  const feeTotals = computeTotalsFromDisciplineFees(t.disciplineFees);
+  const activeDisciplines = DISCIPLINES.filter((d) => hasDisciplineActivity(t, d.key));
+  const disciplinesToRender = activeDisciplines.length > 0 ? activeDisciplines : DISCIPLINES;
 
-  autoTable(doc, {
-    startY: 200,
-    margin: { left: 35, right: 35 },
-    head: [['Discipline / Item', 'Design Lead / Assigned Scope']],
-    body: discData,
-    theme: 'striped',
-    styles: { fontSize: 8.5, cellPadding: 5 },
-    headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255] },
-  });
+  if (feeTotals.hasAnyFee) {
+    const discRows = disciplinesToRender.map((d) => {
+      const fee = getDisciplineFee(t, d.key);
+      const sub = getDisciplineSubtotal(fee);
+      return [
+        `${d.label} (${d.shortLabel})`,
+        getDisciplineNote(t, d.key) || '-',
+        fee.design > 0 ? formatCurrencyPdf(fee.design, currency) : '-',
+        fee.signAndSeal > 0 ? formatCurrencyPdf(fee.signAndSeal, currency) : '-',
+        fee.printing > 0 ? formatCurrencyPdf(fee.printing, currency) : '-',
+        formatCurrencyPdf(sub, currency),
+      ];
+    });
 
-  const finalY = (doc as any).lastAutoTable.finalY + 18;
+    discRows.push([
+      'SUBTOTALS',
+      t.purpose || '-',
+      formatCurrencyPdf(feeTotals.designTotal, currency),
+      formatCurrencyPdf(feeTotals.signAndSealTotal, currency),
+      formatCurrencyPdf(feeTotals.printingTotal, currency),
+      formatCurrencyPdf(feeTotals.totalBill, currency),
+    ]);
 
-  // Financial Items breakdown table
+    autoTable(doc, {
+      startY: 202,
+      margin: { left: 35, right: 35 },
+      head: [['Discipline', 'Lead / Note', 'Design', 'Sign & Seal', 'Printing', 'Subtotal']],
+      body: discRows,
+      theme: 'grid',
+      styles: { fontSize: 8, cellPadding: 4.5 },
+      headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 145 },
+        1: { cellWidth: 95 },
+        2: { cellWidth: 70, halign: 'right' },
+        3: { cellWidth: 70, halign: 'right' },
+        4: { cellWidth: 70, halign: 'right' },
+        5: { cellWidth: 75, halign: 'right', fontStyle: 'bold' },
+      },
+    });
+  } else {
+    const discData = [
+      ...DISCIPLINES.map((d) => [`${d.label} (${d.shortLabel})`, getDisciplineNote(t, d.key) || 'Not assigned / N/A']),
+      ['Purpose / Milestone', t.purpose || '-'],
+    ];
+
+    autoTable(doc, {
+      startY: 202,
+      margin: { left: 35, right: 35 },
+      head: [['Discipline / Item', 'Design Lead / Assigned Scope']],
+      body: discData,
+      theme: 'striped',
+      styles: { fontSize: 8.5, cellPadding: 4.5 },
+      headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255] },
+    });
+  }
+
+  const finalY = (doc as any).lastAutoTable.finalY + 16;
+
+  // Financial Summary Table
   const financeData = [
-    ['Professional Engineering & Design Fee (Bill)', formatCurrencyPdf(t.bill, currency)],
+    ['Professional Engineering & Design Fee (Design + Sign & Seal)', formatCurrencyPdf(t.bill, currency)],
     ['Printing, Blueprints & Document Reproduction (Print Cost)', formatCurrencyPdf(t.printCost, currency)],
     ['TOTAL BILLABLE AMOUNT', formatCurrencyPdf(t.totalBill, currency)],
     ['Amount Paid / Remitted', formatCurrencyPdf(t.amountPaid, currency)],
@@ -435,30 +559,36 @@ export function exportSingleInvoicePdf(
   autoTable(doc, {
     startY: finalY,
     margin: { left: 35, right: 35 },
-    head: [['Financial Description', 'Amount']],
+    head: [['Financial Summary', 'Amount']],
     body: financeData,
     theme: 'grid',
-    styles: { fontSize: 9, cellPadding: 6 },
+    styles: { fontSize: 9, cellPadding: 5.5 },
     headStyles: { fillColor: [15, 23, 42], textColor: [255, 255, 255], fontStyle: 'bold' },
     columnStyles: {
-      0: { cellWidth: 360 },
+      0: { cellWidth: 365 },
       1: { cellWidth: 160, halign: 'right', fontStyle: 'bold' },
     },
   });
 
-  const notesY = (doc as any).lastAutoTable.finalY + 18;
+  let afterTableY = (doc as any).lastAutoTable.finalY + 16;
   if (t.remarks) {
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(9);
+    doc.setFontSize(8.5);
     doc.setTextColor(71, 85, 105);
-    doc.text('Remarks / Notes:', 35, notesY);
+    doc.text('Remarks / Notes:', 35, afterTableY);
     doc.setFont('helvetica', 'normal');
     doc.setTextColor(15, 23, 42);
-    doc.text(t.remarks, 35, notesY + 14, { maxWidth: pageWidth - 70 });
+    doc.text(t.remarks, 35, afterTableY + 13, { maxWidth: pageWidth - 70 });
+    afterTableY += 36;
   }
 
-  // Signatures
-  const sigY = 720;
+  // Ensure signatures don't overlap content
+  let sigY = Math.max(afterTableY + 35, 720);
+  if (sigY > pageHeight - 75) {
+    doc.addPage();
+    sigY = 100;
+  }
+
   doc.setDrawColor(203, 213, 225);
   doc.line(40, sigY, 220, sigY);
   doc.line(pageWidth - 220, sigY, pageWidth - 40, sigY);
@@ -482,5 +612,489 @@ export function exportSingleInvoicePdf(
   doc.setTextColor(100, 116, 139);
   doc.text(`${t.client} Representative`, pageWidth - 220, sigY + 26);
 
-  doc.save(`Invoice_${t.id}_${t.client.replace(/\s+/g, '_')}.pdf`);
+  doc.save(`Invoice_${sanitizeFileSegment(t.id)}_${sanitizeFileSegment(t.client)}.pdf`);
+}
+
+export interface ClientStatementOptions {
+  scopeLabel: string;
+  statementDate?: string;
+  dueDate?: string;
+  includeDisciplineBreakdown?: boolean;
+  notes?: string;
+}
+
+export function exportClientStatementOfAccountPdf(
+  clientName: string,
+  clientTransactions: Transaction[],
+  currency: Currency = 'PHP',
+  companyProfile: CompanyProfile = DEFAULT_COMPANY_PROFILE,
+  options: ClientStatementOptions = { scopeLabel: 'All Transactions' }
+) {
+  const doc = new jsPDF({
+    orientation: 'portrait',
+    unit: 'pt',
+    format: 'a4',
+  });
+
+  const pageWidth = doc.internal.pageSize.getWidth();
+  const pageHeight = doc.internal.pageSize.getHeight();
+  const statementDate = options.statementDate || new Date().toISOString().split('T')[0];
+  const soaRef = `SOA-${statementDate.replace(/-/g, '')}-${String(clientTransactions.length).padStart(2, '0')}`;
+
+  // Sort chronologically for statement presentation
+  const sortedTxs = [...clientTransactions].sort((a, b) => a.date.localeCompare(b.date));
+
+  const totalBilled = sortedTxs.reduce((s, t) => s + (t.totalBill || 0), 0);
+  const totalPaid = sortedTxs.reduce((s, t) => s + (t.amountPaid || 0), 0);
+  const totalBalance = sortedTxs.reduce((s, t) => s + (t.balance || 0), 0);
+  const totalDesign = sortedTxs.reduce((s, t) => {
+    const f = computeTotalsFromDisciplineFees(t.disciplineFees);
+    return s + (f.hasAnyFee ? f.designTotal : t.bill || 0);
+  }, 0);
+  const totalSignSeal = sortedTxs.reduce((s, t) => {
+    const f = computeTotalsFromDisciplineFees(t.disciplineFees);
+    return s + (f.hasAnyFee ? f.signAndSealTotal : 0);
+  }, 0);
+  const totalPrinting = sortedTxs.reduce((s, t) => {
+    const f = computeTotalsFromDisciplineFees(t.disciplineFees);
+    return s + (f.hasAnyFee ? f.printingTotal : t.printCost || 0);
+  }, 0);
+
+  // Top Header Band
+  doc.setFillColor(15, 23, 42);
+  doc.rect(0, 0, pageWidth, 88, 'F');
+
+  let textLeft = 35;
+  if (companyProfile.logoUrl) {
+    try {
+      doc.setFillColor(255, 255, 255);
+      doc.roundedRect(35, 16, 54, 54, 4, 4, 'F');
+      doc.addImage(companyProfile.logoUrl, 'PNG', 38, 19, 48, 48);
+      textLeft = 100;
+    } catch {
+      textLeft = 35;
+    }
+  }
+
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(13.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text(companyProfile.companyName || 'STATEMENT OF ACCOUNT', textLeft, 30, { maxWidth: 300 });
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(203, 213, 225);
+  const metaLine = [companyProfile.tagline, companyProfile.tinNumber].filter(Boolean).join(' | ');
+  doc.text(metaLine, textLeft, 44, { maxWidth: 310 });
+
+  doc.setFontSize(7.5);
+  doc.setTextColor(148, 163, 184);
+  const contactLine = [companyProfile.address, companyProfile.contactInfo].filter(Boolean).join(' · ');
+  doc.text(contactLine, textLeft, 58, { maxWidth: 310 });
+
+  // Right-side Statement Badge
+  doc.setTextColor(255, 255, 255);
+  doc.setFontSize(13);
+  doc.setFont('helvetica', 'bold');
+  doc.text('STATEMENT OF ACCOUNT', pageWidth - 35, 32, { align: 'right' });
+
+  doc.setFontSize(8.5);
+  doc.setTextColor(165, 180, 252);
+  doc.text(`Ref #: ${soaRef}`, pageWidth - 35, 48, { align: 'right' });
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(203, 213, 225);
+  doc.text(`Issued: ${formatDate(statementDate)}`, pageWidth - 35, 62, { align: 'right' });
+  if (options.dueDate) {
+    doc.text(`Due Date: ${formatDate(options.dueDate)}`, pageWidth - 35, 74, { align: 'right' });
+  }
+
+  // Client & Summary Card
+  doc.setDrawColor(226, 232, 240);
+  doc.setFillColor(248, 250, 252);
+  doc.roundedRect(35, 102, pageWidth - 70, 82, 5, 5, 'FD');
+
+  // Left: Bill To
+  doc.setTextColor(100, 116, 139);
+  doc.setFontSize(7.5);
+  doc.setFont('helvetica', 'bold');
+  doc.text('STATEMENT FOR CLIENT', 48, 118);
+
+  doc.setTextColor(15, 23, 42);
+  doc.setFontSize(12);
+  doc.setFont('helvetica', 'bold');
+  doc.text(clientName, 48, 134, { maxWidth: 250 });
+
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text(`Statement Scope: ${options.scopeLabel}`, 48, 151);
+  doc.text(`Total Transactions Included: ${sortedTxs.length} project record${sortedTxs.length === 1 ? '' : 's'}`, 48, 165);
+  doc.text(`Account Status: ${totalBalance > 0 ? 'Balance Due' : 'Fully Settled'}`, 48, 178);
+
+  // Right: Financial Summary Box
+  const boxX = pageWidth - 245;
+  doc.setFillColor(255, 255, 255);
+  doc.setDrawColor(203, 213, 225);
+  doc.roundedRect(boxX, 110, 198, 66, 4, 4, 'FD');
+
+  doc.setFontSize(8);
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(71, 85, 105);
+  doc.text('Total Billed:', boxX + 10, 126);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(formatCurrencyPdf(totalBilled, currency), boxX + 188, 126, { align: 'right' });
+
+  doc.setFont('helvetica', 'normal');
+  doc.setTextColor(22, 101, 52);
+  doc.text('Total Payments Paid:', boxX + 10, 141);
+  doc.setFont('helvetica', 'bold');
+  doc.text(formatCurrencyPdf(totalPaid, currency), boxX + 188, 141, { align: 'right' });
+
+  doc.setDrawColor(226, 232, 240);
+  doc.line(boxX + 10, 148, boxX + 188, 148);
+
+  doc.setFontSize(9);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(totalBalance > 0 ? 185 : 22, totalBalance > 0 ? 28 : 101, totalBalance > 0 ? 28 : 52);
+  doc.text('BALANCE DUE:', boxX + 10, 164);
+  doc.text(formatCurrencyPdf(totalBalance, currency), boxX + 188, 164, { align: 'right' });
+
+  // Section 1: Itemized Transactions Table
+  doc.setFont('helvetica', 'bold');
+  doc.setFontSize(10);
+  doc.setTextColor(30, 41, 59);
+  doc.text('ITEMIZED ACCOUNT ACTIVITY', 35, 206);
+
+  const itemRows = sortedTxs.map((t) => {
+    const f = computeTotalsFromDisciplineFees(t.disciplineFees);
+    const designVal = f.hasAnyFee ? f.designTotal : t.bill || 0;
+    const signSealVal = f.hasAnyFee ? f.signAndSealTotal : 0;
+    const printVal = f.hasAnyFee ? f.printingTotal : t.printCost || 0;
+    const projectDesc = t.purpose ? `${t.projectName}\n${t.purpose}` : t.projectName;
+
+    return [
+      t.date,
+      t.id,
+      projectDesc,
+      formatCurrencyPdf(designVal, currency),
+      signSealVal > 0 ? formatCurrencyPdf(signSealVal, currency) : '-',
+      printVal > 0 ? formatCurrencyPdf(printVal, currency) : '-',
+      formatCurrencyPdf(t.totalBill, currency),
+      formatCurrencyPdf(t.amountPaid, currency),
+      formatCurrencyPdf(t.balance, currency),
+      t.paymentStatus,
+    ];
+  });
+
+  itemRows.push([
+    'TOTAL',
+    `${sortedTxs.length} items`,
+    'GRAND TOTALS',
+    formatCurrencyPdf(totalDesign, currency),
+    formatCurrencyPdf(totalSignSeal, currency),
+    formatCurrencyPdf(totalPrinting, currency),
+    formatCurrencyPdf(totalBilled, currency),
+    formatCurrencyPdf(totalPaid, currency),
+    formatCurrencyPdf(totalBalance, currency),
+    totalBalance > 0 ? 'Due' : 'Settled',
+  ]);
+
+  autoTable(doc, {
+    startY: 214,
+    margin: { left: 35, right: 35, bottom: 45 },
+    head: [['Date', 'Ref #', 'Project / Purpose', 'Design', 'Sign & Seal', 'Printing', 'Total Bill', 'Paid', 'Balance', 'Status']],
+    body: itemRows,
+    theme: 'grid',
+    styles: {
+      fontSize: 7,
+      cellPadding: 3.5,
+      overflow: 'linebreak',
+      valign: 'middle',
+    },
+    headStyles: {
+      fillColor: [15, 23, 42],
+      textColor: [255, 255, 255],
+      fontStyle: 'bold',
+      fontSize: 7.2,
+    },
+    alternateRowStyles: {
+      fillColor: [248, 250, 252],
+    },
+    columnStyles: {
+      0: { cellWidth: 46 },
+      1: { cellWidth: 46 },
+      2: { cellWidth: 112 },
+      3: { cellWidth: 48, halign: 'right' },
+      4: { cellWidth: 48, halign: 'right' },
+      5: { cellWidth: 45, halign: 'right' },
+      6: { cellWidth: 50, halign: 'right', fontStyle: 'bold' },
+      7: { cellWidth: 45, halign: 'right' },
+      8: { cellWidth: 48, halign: 'right', fontStyle: 'bold' },
+      9: { cellWidth: 37, halign: 'center' },
+    },
+    didParseCell: (data) => {
+      if (data.row.index === itemRows.length - 1 && data.section === 'body') {
+        data.cell.styles.fillColor = [238, 242, 255];
+        data.cell.styles.fontStyle = 'bold';
+        data.cell.styles.textColor = [15, 23, 42];
+      }
+    },
+  });
+
+  let cursorY = (doc as any).lastAutoTable.finalY + 18;
+
+  // Optional Section 2: Aggregated Discipline Charges Breakdown
+  if (options.includeDisciplineBreakdown !== false) {
+    const discTotals = DISCIPLINES.map((d) => {
+      let design = 0;
+      let signAndSeal = 0;
+      let printing = 0;
+      sortedTxs.forEach((t) => {
+        const fee = getDisciplineFee(t, d.key);
+        design += fee.design;
+        signAndSeal += fee.signAndSeal;
+        printing += fee.printing;
+      });
+      const subtotal = Number((design + signAndSeal + printing).toFixed(2));
+      return {
+        label: `${d.label} (${d.shortLabel})`,
+        design,
+        signAndSeal,
+        printing,
+        subtotal,
+      };
+    }).filter((row) => row.subtotal > 0);
+
+    if (discTotals.length > 0) {
+      if (cursorY > pageHeight - 160) {
+        doc.addPage();
+        cursorY = 45;
+      }
+
+      doc.setFont('helvetica', 'bold');
+      doc.setFontSize(9.5);
+      doc.setTextColor(30, 41, 59);
+      doc.text('SUMMARY OF CHARGES BY ENGINEERING DISCIPLINE', 35, cursorY);
+
+      const discBody = discTotals.map((r) => [
+        r.label,
+        formatCurrencyPdf(r.design, currency),
+        formatCurrencyPdf(r.signAndSeal, currency),
+        formatCurrencyPdf(r.printing, currency),
+        formatCurrencyPdf(r.subtotal, currency),
+      ]);
+
+      autoTable(doc, {
+        startY: cursorY + 8,
+        margin: { left: 35, right: 35, bottom: 45 },
+        head: [['Discipline', 'Design', 'Sign & Seal', 'Printing', 'Discipline Total']],
+        body: discBody,
+        theme: 'striped',
+        styles: { fontSize: 7.5, cellPadding: 4 },
+        headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' },
+        columnStyles: {
+          0: { cellWidth: 205 },
+          1: { cellWidth: 80, halign: 'right' },
+          2: { cellWidth: 80, halign: 'right' },
+          3: { cellWidth: 80, halign: 'right' },
+          4: { cellWidth: 80, halign: 'right', fontStyle: 'bold' },
+        },
+      });
+
+      cursorY = (doc as any).lastAutoTable.finalY + 18;
+    }
+  }
+
+  // Optional Notes / Payment Instructions
+  if (options.notes && options.notes.trim()) {
+    if (cursorY > pageHeight - 110) {
+      doc.addPage();
+      cursorY = 45;
+    }
+    doc.setFillColor(248, 250, 252);
+    doc.setDrawColor(226, 232, 240);
+    doc.roundedRect(35, cursorY, pageWidth - 70, 48, 4, 4, 'FD');
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(8);
+    doc.setTextColor(71, 85, 105);
+    doc.text('PAYMENT INSTRUCTIONS & REMARKS', 45, cursorY + 14);
+
+    doc.setFont('helvetica', 'normal');
+    doc.setFontSize(8);
+    doc.setTextColor(15, 23, 42);
+    doc.text(options.notes.trim(), 45, cursorY + 28, { maxWidth: pageWidth - 90 });
+
+    cursorY += 62;
+  }
+
+  // Signatory block (safe page check)
+  let sigY = Math.max(cursorY + 32, pageHeight - 110);
+  if (cursorY > pageHeight - 110) {
+    doc.addPage();
+    sigY = 95;
+  }
+
+  doc.setDrawColor(203, 213, 225);
+  doc.line(40, sigY, 220, sigY);
+  doc.line(pageWidth - 220, sigY, pageWidth - 40, sigY);
+
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text(companyProfile.signatoryName || 'Authorized Signatory', 40, sigY + 14);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text(companyProfile.signatoryTitle || 'Managing Principal', 40, sigY + 26);
+  doc.text(companyProfile.companyName || '', 40, sigY + 37);
+
+  doc.setFontSize(8.5);
+  doc.setFont('helvetica', 'bold');
+  doc.setTextColor(15, 23, 42);
+  doc.text('Acknowledged & Received By:', pageWidth - 220, sigY + 14);
+  doc.setFont('helvetica', 'normal');
+  doc.setFontSize(7.5);
+  doc.setTextColor(100, 116, 139);
+  doc.text(`${clientName} Representative`, pageWidth - 220, sigY + 26);
+  doc.text('Date Received: _____________________', pageWidth - 220, sigY + 38);
+
+  // Page numbers on all pages
+  const totalPages = (doc as any).internal.getNumberOfPages();
+  for (let i = 1; i <= totalPages; i++) {
+    doc.setPage(i);
+    doc.setFontSize(7.5);
+    doc.setTextColor(148, 163, 184);
+    doc.text(
+      `${companyProfile.companyName || 'LedgerPro'} — Statement of Account (${clientName}) — Page ${i} of ${totalPages}`,
+      35,
+      pageHeight - 18
+    );
+  }
+
+  doc.save(`SOA_${sanitizeFileSegment(clientName)}_${statementDate}.pdf`);
+}
+
+export function exportClientStatementOfAccountExcel(
+  clientName: string,
+  clientTransactions: Transaction[],
+  currency: Currency = 'PHP',
+  companyProfile: CompanyProfile = DEFAULT_COMPANY_PROFILE,
+  options: ClientStatementOptions = { scopeLabel: 'All Transactions' }
+) {
+  const statementDate = options.statementDate || new Date().toISOString().split('T')[0];
+  const sortedTxs = [...clientTransactions].sort((a, b) => a.date.localeCompare(b.date));
+
+  const rows: Record<string, any>[] = sortedTxs.map((t) => {
+    const f = computeTotalsFromDisciplineFees(t.disciplineFees);
+    return {
+      'Date': t.date,
+      'Ref #': t.id,
+      'Project Name': t.projectName,
+      'Purpose': t.purpose,
+      'Design Fees': f.hasAnyFee ? f.designTotal : t.bill || 0,
+      'Sign & Seal Fees': f.hasAnyFee ? f.signAndSealTotal : 0,
+      'Printing Fees': f.hasAnyFee ? f.printingTotal : t.printCost || 0,
+      'Total Bill': t.totalBill,
+      'Amount Paid': t.amountPaid,
+      'Balance Due': t.balance,
+      'Status': t.paymentStatus,
+      'Payment Date': t.paymentDate || '-',
+      'Remarks': t.remarks || '-',
+    };
+  });
+
+  const totalBilled = sortedTxs.reduce((s, t) => s + (t.totalBill || 0), 0);
+  const totalPaid = sortedTxs.reduce((s, t) => s + (t.amountPaid || 0), 0);
+  const totalBalance = sortedTxs.reduce((s, t) => s + (t.balance || 0), 0);
+  const totalDesign = sortedTxs.reduce((s, t) => {
+    const f = computeTotalsFromDisciplineFees(t.disciplineFees);
+    return s + (f.hasAnyFee ? f.designTotal : t.bill || 0);
+  }, 0);
+  const totalSignSeal = sortedTxs.reduce((s, t) => {
+    const f = computeTotalsFromDisciplineFees(t.disciplineFees);
+    return s + (f.hasAnyFee ? f.signAndSealTotal : 0);
+  }, 0);
+  const totalPrinting = sortedTxs.reduce((s, t) => {
+    const f = computeTotalsFromDisciplineFees(t.disciplineFees);
+    return s + (f.hasAnyFee ? f.printingTotal : t.printCost || 0);
+  }, 0);
+
+  rows.push({
+    'Date': 'TOTALS',
+    'Ref #': `${sortedTxs.length} projects`,
+    'Project Name': clientName,
+    'Purpose': `${companyProfile.companyName} | ${options.scopeLabel}`,
+    'Design Fees': totalDesign,
+    'Sign & Seal Fees': totalSignSeal,
+    'Printing Fees': totalPrinting,
+    'Total Bill': totalBilled,
+    'Amount Paid': totalPaid,
+    'Balance Due': totalBalance,
+    'Status': totalBalance > 0 ? 'Balance Due' : 'Settled',
+    'Payment Date': statementDate,
+    'Remarks': options.notes || '',
+  });
+
+  const wb = XLSX.utils.book_new();
+  const ws = XLSX.utils.json_to_sheet(rows);
+  ws['!cols'] = [
+    { wch: 12 },
+    { wch: 14 },
+    { wch: 26 },
+    { wch: 30 },
+    { wch: 14 },
+    { wch: 16 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 14 },
+    { wch: 26 },
+  ];
+  XLSX.utils.book_append_sheet(wb, ws, 'Statement of Account');
+
+  // Sheet 2: Discipline Breakdown for this client
+  const discRows: Record<string, any>[] = [];
+  DISCIPLINES.forEach((d) => {
+    let design = 0;
+    let signAndSeal = 0;
+    let printing = 0;
+    sortedTxs.forEach((t) => {
+      const fee = getDisciplineFee(t, d.key);
+      design += fee.design;
+      signAndSeal += fee.signAndSeal;
+      printing += fee.printing;
+    });
+    const subtotal = Number((design + signAndSeal + printing).toFixed(2));
+    if (subtotal > 0) {
+      discRows.push({
+        'Discipline': d.label,
+        'Design': design,
+        'Sign & Seal': signAndSeal,
+        'Printing': printing,
+        'Subtotal': subtotal,
+        'Currency': currency,
+      });
+    }
+  });
+
+  if (discRows.length > 0) {
+    const discWs = XLSX.utils.json_to_sheet(discRows);
+    discWs['!cols'] = [
+      { wch: 30 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 16 },
+      { wch: 10 },
+    ];
+    XLSX.utils.book_append_sheet(wb, discWs, 'Discipline Summary');
+  }
+
+  XLSX.writeFile(wb, `SOA_${sanitizeFileSegment(clientName)}_${statementDate}.xlsx`);
 }

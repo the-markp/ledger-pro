@@ -7,6 +7,7 @@ import { AnalyticsView } from './components/AnalyticsView';
 import { TransactionModal } from './components/TransactionModal';
 import { PaymentModal } from './components/PaymentModal';
 import { ExportModal } from './components/ExportModal';
+import { ClientStatementModal } from './components/ClientStatementModal';
 import { CompanySettingsModal } from './components/CompanySettingsModal';
 import { UserManagementModal } from './components/UserManagementModal';
 import { ChangePinModal } from './components/ChangePinModal';
@@ -94,11 +95,18 @@ export default function App() {
   const [paymentTargetTransaction, setPaymentTargetTransaction] = useState<Transaction | null>(null);
 
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
+  const [isStatementModalOpen, setIsStatementModalOpen] = useState(false);
+  const [statementInitialClient, setStatementInitialClient] = useState<string | undefined>(undefined);
   const [isCompanySettingsOpen, setIsCompanySettingsOpen] = useState(false);
   const [isUserManagementOpen, setIsUserManagementOpen] = useState(false);
   const [isChangePinOpen, setIsChangePinOpen] = useState(false);
   const [isBackupRestoreOpen, setIsBackupRestoreOpen] = useState(false);
   const [isAndroidModalOpen, setIsAndroidModalOpen] = useState(false);
+
+  const handleOpenClientStatement = (clientName?: string) => {
+    setStatementInitialClient(clientName);
+    setIsStatementModalOpen(true);
+  };
 
   // Initial load: Fetch from PostgreSQL REST API backend if reachable, falling back gracefully to localStorage
   useEffect(() => {
@@ -466,6 +474,7 @@ export default function App() {
           setIsTxModalOpen(true);
         }}
         onOpenExportModal={() => setIsExportModalOpen(true)}
+        onOpenClientStatement={() => handleOpenClientStatement()}
         onResetSeedData={handleResetSeedData}
       />
 
@@ -482,6 +491,7 @@ export default function App() {
             onDeleteMultiple={handleDeleteMultiple}
             onOpenPaymentModal={handleOpenPayment}
             onBatchStatusUpdate={handleBatchStatusUpdate}
+            onOpenClientStatement={handleOpenClientStatement}
           />
         )}
 
@@ -511,6 +521,7 @@ export default function App() {
           <AnalyticsView
             transactions={transactions}
             currency={currency}
+            onOpenClientStatement={handleOpenClientStatement}
           />
         )}
       </main>
@@ -524,7 +535,7 @@ export default function App() {
             <span>{companyProfile.tagline}</span>
           </div>
           <div className="flex items-center gap-2 text-slate-400">
-            <span>Disciplines: EE, Pl, St, Arch, ECE, ME, Others</span>
+            <span>Disciplines: EE, Pl, St, Arch, ECE, ME, Solar/Elec, Others</span>
             <span>·</span>
             <button
               onClick={() => setIsBackupRestoreOpen(true)}
@@ -572,6 +583,16 @@ export default function App() {
         transactions={transactions}
         currency={currency}
         companyProfile={companyProfile}
+        onOpenClientStatement={() => handleOpenClientStatement()}
+      />
+
+      <ClientStatementModal
+        isOpen={isStatementModalOpen}
+        onClose={() => setIsStatementModalOpen(false)}
+        transactions={transactions}
+        currency={currency}
+        companyProfile={companyProfile}
+        initialClient={statementInitialClient}
       />
 
       <CompanySettingsModal
