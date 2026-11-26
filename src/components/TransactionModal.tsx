@@ -3,6 +3,7 @@ import { X, Check, Calculator, Sun } from 'lucide-react';
 import {
   Transaction,
   PaymentStatus,
+  PaymentRecord,
   Currency,
   DISCIPLINES,
   DisciplineKey,
@@ -11,6 +12,7 @@ import {
   getDisciplineFee,
   getDisciplineSubtotal,
   computeTotalsFromDisciplineFees,
+  getNormalizedPayments,
 } from '../types/transaction';
 import { formatCurrency } from '../utils/formatters';
 
@@ -259,12 +261,63 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
     const bill = totals.hasAnyFee ? totals.serviceBill : Number(formData.bill) || 0;
     const printCost = totals.hasAnyFee ? totals.printingTotal : Number(formData.printCost) || 0;
     const totalBill = Number((bill + printCost).toFixed(2));
-    const amountPaid = Number(formData.amountPaid) || 0;
-    const balance = Number((totalBill - amountPaid).toFixed(2));
+    const now = new Date().toISOString();
+
+    const existingPayments = getNormalizedPayments(initialTransaction);
+    let finalPayments: PaymentRecord[] = existingPayments;
+    let amountPaid = Number(formData.amountPaid) || 0;
+
+    if (!initialTransaction || existingPayments.length === 0) {
+      if (amountPaid > 0) {
+        finalPayments = [
+          {
+            id: `PAY-${Date.now()}-1`,
+            amount: Number(amountPaid.toFixed(2)),
+            date: formData.paymentDate || formData.date || now.split('T')[0],
+            method: formData.paymentMethod || 'Bank Transfer',
+            reference: formData.paymentReference || '',
+            remarks: 'Initial payment',
+            recordedAt: now,
+          },
+        ];
+      } else {
+        finalPayments = [];
+      }
+    } else if (existingPayments.length === 1) {
+      // Single payment edited directly in transaction form
+      if (amountPaid > 0) {
+        finalPayments = [
+          {
+            ...existingPayments[0],
+            amount: Number(amountPaid.toFixed(2)),
+            date: formData.paymentDate || existingPayments[0].date,
+            method: formData.paymentMethod || existingPayments[0].method,
+            reference: formData.paymentReference ?? existingPayments[0].reference,
+          },
+        ];
+      } else {
+        finalPayments = [];
+      }
+    } else {
+      // Multiple installments exist — preserve itemized history and keep exact sum
+      amountPaid = Number(
+        existingPayments.reduce((s, p) => s + (Number(p.amount) || 0), 0).toFixed(2)
+      );
+    }
+
+    const balance = Math.max(0, Number((totalBill - amountPaid).toFixed(2)));
+    let paymentStatus: PaymentStatus = (formData.paymentStatus as PaymentStatus) || 'Pending';
+    if (amountPaid >= totalBill && totalBill > 0) {
+      paymentStatus = 'Paid';
+    } else if (amountPaid > 0 && amountPaid < totalBill) {
+      paymentStatus = paymentStatus === 'Overdue' ? 'Overdue' : 'Partially Paid';
+    } else if (amountPaid === 0) {
+      paymentStatus = paymentStatus === 'Overdue' ? 'Overdue' : 'Pending';
+    }
 
     const finalTransaction: Transaction = {
       id: formData.id || `TRX-${Date.now().toString().slice(-6)}`,
-      date: formData.date || new Date().toISOString().split('T')[0],
+      date: formData.date || now.split('T')[0],
       client: formData.client?.trim() || '',
       projectName: formData.projectName?.trim() || '',
       ee: formData.ee?.trim() || '',
@@ -280,15 +333,16 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
       bill,
       printCost,
       totalBill,
-      paymentStatus: (formData.paymentStatus as PaymentStatus) || 'Pending',
+      paymentStatus,
       amountPaid,
-      balance: balance < 0 ? 0 : balance,
+      balance,
       paymentDate: formData.paymentDate || undefined,
       paymentMethod: formData.paymentMethod || undefined,
       paymentReference: formData.paymentReference || undefined,
+      payments: finalPayments,
       remarks: formData.remarks?.trim() || '',
-      createdAt: initialTransaction?.createdAt || new Date().toISOString(),
-      updatedAt: new Date().toISOString(),
+      createdAt: initialTransaction?.createdAt || now,
+      updatedAt: now,
     };
 
     onSave(finalTransaction);
@@ -308,7 +362,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               {initialTransaction ? 'Edit Transaction' : 'Record New Transaction'}
             </h2>
             <p className="text-xs text-slate-500 mt-0.5">
-              Enter project details, per-discipline charges (Design, Sign &amp; Seal, Printing), and payment tracking.
+              Enter project details, per-discipline charges (Design / Installation, Sign &amp; Seal, Printing), and payment tracking.
             </p>
           </div>
           <button
@@ -411,7 +465,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 2. Engineering Disciplines &amp; Fee Breakdown
               </div>
               <span className="text-[11px] text-slate-500">
-                Enter charged amounts for <strong className="text-slate-700">Design</strong>,{' '}
+                Enter charged amounts for <strong className="text-slate-700">Design / Installation</strong>,{' '}
                 <strong className="text-slate-700">Sign &amp; Seal</strong>, and{' '}
                 <strong className="text-slate-700">Printing</strong> per discipline
               </span>
@@ -424,7 +478,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                     <tr>
                       <th className="py-2.5 px-3 min-w-[175px]">Discipline</th>
                       <th className="py-2.5 px-2.5 min-w-[140px]">Lead / Ref Note</th>
-                      <th className="py-2.5 px-2.5 text-right min-w-[115px]">Design</th>
+                      <th className="py-2.5 px-2.5 text-right min-w-[130px]">Design / Installation</th>
                       <th className="py-2.5 px-2.5 text-right min-w-[115px]">Sign &amp; Seal</th>
                       <th className="py-2.5 px-2.5 text-right min-w-[115px]">Printing</th>
                       <th className="py-2.5 px-3 text-right min-w-[115px] bg-slate-800 text-indigo-200">Subtotal</th>
@@ -478,7 +532,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                               step="0.01"
                               min="0"
                               placeholder="0.00"
-                              aria-label={`${disc.label} Design amount`}
+                              aria-label={`${disc.label} Design / Installation amount`}
                               value={fee.design === 0 ? '' : fee.design}
                               onChange={(e) =>
                                 handleDisciplineFeeChange(disc.key, 'design', e.target.value)
@@ -561,7 +615,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
               </span>
               <span className="text-[11px] font-normal text-slate-500">
                 {feeTotals.hasAnyFee
-                  ? 'Auto-synced from discipline breakdown (Bill = Design + Sign & Seal; Print Cost = Printing)'
+                  ? 'Auto-synced from discipline breakdown (Bill = Design / Installation + Sign & Seal; Print Cost = Printing)'
                   : 'Total Bill = Bill + Print Cost (or enter discipline amounts above)'}
               </span>
             </div>
@@ -569,7 +623,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 items-center">
               <div>
                 <label className="block text-xs font-medium text-slate-700 mb-1">
-                  Bill (Design + Sign &amp; Seal)
+                  Bill (Design / Installation + Sign &amp; Seal)
                 </label>
                 <div className="relative">
                   <input
@@ -589,7 +643,7 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 </div>
                 {feeTotals.hasAnyFee && (
                   <p className="text-[10px] text-slate-500 mt-1 font-mono">
-                    Design: {formatCurrency(feeTotals.designTotal, currency)} + Sign &amp; Seal:{' '}
+                    Design / Installation: {formatCurrency(feeTotals.designTotal, currency)} + Sign &amp; Seal:{' '}
                     {formatCurrency(feeTotals.signAndSealTotal, currency)}
                   </p>
                 )}
@@ -635,8 +689,13 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
 
           {/* Section 4: Payment Status & Settlement */}
           <div>
-            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 pb-1 border-b border-slate-200">
-              4. Payment Status &amp; Tracking
+            <div className="text-xs font-semibold uppercase tracking-wider text-slate-500 mb-3 pb-1 border-b border-slate-200 flex items-center justify-between gap-2">
+              <span>4. Payment Status &amp; Tracking</span>
+              {initialTransaction && (initialTransaction.payments?.length || 0) > 1 && (
+                <span className="text-[11px] font-normal normal-case text-amber-700 bg-amber-50 border border-amber-200 px-2 py-0.5 rounded">
+                  {initialTransaction.payments?.length} partial payments recorded — use the Payment button to add/remove installments
+                </span>
+              )}
             </div>
 
             <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
@@ -646,8 +705,9 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                 </label>
                 <select
                   value={formData.paymentStatus}
+                  disabled={Boolean(initialTransaction && (initialTransaction.payments?.length || 0) > 1)}
                   onChange={(e) => handleStatusChange(e.target.value as PaymentStatus)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer"
+                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 text-xs font-medium focus:outline-none focus:ring-2 focus:ring-indigo-500 cursor-pointer disabled:bg-slate-100 disabled:text-slate-500 disabled:cursor-not-allowed"
                 >
                   <option value="Pending">Pending (Unpaid)</option>
                   <option value="Partially Paid">Partially Paid</option>
@@ -665,9 +725,14 @@ export const TransactionModal: React.FC<TransactionModalProps> = ({
                   step="0.01"
                   min="0"
                   placeholder="0.00"
+                  readOnly={Boolean(initialTransaction && (initialTransaction.payments?.length || 0) > 1)}
                   value={formData.amountPaid === 0 ? '' : formData.amountPaid}
                   onChange={(e) => handleAmountPaidChange(parseFloat(e.target.value) || 0)}
-                  className="w-full px-3 py-2 bg-white border border-slate-300 rounded-lg text-slate-900 font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500"
+                  className={`w-full px-3 py-2 border border-slate-300 rounded-lg font-mono text-xs focus:outline-none focus:ring-2 focus:ring-indigo-500 ${
+                    initialTransaction && (initialTransaction.payments?.length || 0) > 1
+                      ? 'bg-slate-100 text-slate-600 cursor-not-allowed'
+                      : 'bg-white text-slate-900'
+                  }`}
                 />
               </div>
 

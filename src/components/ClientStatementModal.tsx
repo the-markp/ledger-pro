@@ -16,6 +16,7 @@ import {
   DISCIPLINES,
   getDisciplineFee,
   computeTotalsFromDisciplineFees,
+  getNormalizedPayments,
 } from '../types/transaction';
 import { formatCurrency, formatDate } from '../utils/formatters';
 import {
@@ -142,6 +143,16 @@ export const ClientStatementModal: React.FC<ClientStatementModalProps> = ({
       return { ...d, design, signAndSeal, printing, subtotal };
     }).filter((d) => d.subtotal > 0);
 
+    const paymentHistory = filteredClientTransactions
+      .flatMap((t) =>
+        getNormalizedPayments(t).map((p) => ({
+          ...p,
+          transactionId: t.id,
+          projectName: t.projectName,
+        }))
+      )
+      .sort((a, b) => a.date.localeCompare(b.date));
+
     return {
       totalBilled,
       totalPaid,
@@ -150,6 +161,7 @@ export const ClientStatementModal: React.FC<ClientStatementModalProps> = ({
       totalSignSeal,
       totalPrinting,
       disciplineBreakdown,
+      paymentHistory,
     };
   }, [filteredClientTransactions]);
 
@@ -443,7 +455,7 @@ export const ClientStatementModal: React.FC<ClientStatementModalProps> = ({
                       <tr>
                         <th className="py-2 px-3 whitespace-nowrap">Date</th>
                         <th className="py-2 px-3">Project &amp; Purpose</th>
-                        <th className="py-2 px-2.5 text-right whitespace-nowrap">Design</th>
+                        <th className="py-2 px-2.5 text-right whitespace-nowrap">Design / Installation</th>
                         <th className="py-2 px-2.5 text-right whitespace-nowrap">Sign &amp; Seal</th>
                         <th className="py-2 px-2.5 text-right whitespace-nowrap">Printing</th>
                         <th className="py-2 px-3 text-right whitespace-nowrap bg-slate-800">Total Bill</th>
@@ -483,7 +495,12 @@ export const ClientStatementModal: React.FC<ClientStatementModalProps> = ({
                               {formatCurrency(t.totalBill, currency)}
                             </td>
                             <td className="py-2 px-2.5 text-right font-mono text-emerald-700 whitespace-nowrap">
-                              {formatCurrency(t.amountPaid, currency)}
+                              <div>{formatCurrency(t.amountPaid, currency)}</div>
+                              {getNormalizedPayments(t).length > 1 && (
+                                <div className="text-[10px] font-sans text-slate-500">
+                                  ({getNormalizedPayments(t).length} pmts)
+                                </div>
+                              )}
                             </td>
                             <td className="py-2 px-3 text-right font-mono font-semibold whitespace-nowrap">
                               {t.balance > 0 ? (
@@ -557,7 +574,7 @@ export const ClientStatementModal: React.FC<ClientStatementModalProps> = ({
                     <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200">
                       <tr>
                         <th className="py-1.5 px-3">Discipline</th>
-                        <th className="py-1.5 px-3 text-right">Design</th>
+                        <th className="py-1.5 px-3 text-right">Design / Installation</th>
                         <th className="py-1.5 px-3 text-right">Sign &amp; Seal</th>
                         <th className="py-1.5 px-3 text-right">Printing</th>
                         <th className="py-1.5 px-3 text-right">Subtotal</th>
@@ -580,6 +597,50 @@ export const ClientStatementModal: React.FC<ClientStatementModalProps> = ({
                           </td>
                           <td className="py-1.5 px-3 text-right font-mono font-bold text-slate-900">
                             {formatCurrency(d.subtotal, currency)}
+                          </td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
+                </div>
+              </div>
+            )}
+
+            {/* Payment Receipts / Partial Payments History Preview */}
+            {summary.paymentHistory.length > 0 && (
+              <div className="border border-slate-200 rounded-xl overflow-hidden bg-white">
+                <div className="px-4 py-2 bg-slate-50 border-b border-slate-200 flex items-center justify-between">
+                  <span className="font-semibold text-slate-700">
+                    Payment Receipts &amp; Partial Payments History ({summary.paymentHistory.length})
+                  </span>
+                  <span className="text-[11px] text-slate-500">Included on PDF &amp; Excel</span>
+                </div>
+                <div className="overflow-x-auto max-h-[180px]">
+                  <table className="w-full text-left border-collapse text-xs">
+                    <thead className="bg-slate-100 text-slate-600 font-semibold border-b border-slate-200 sticky top-0">
+                      <tr>
+                        <th className="py-1.5 px-3 whitespace-nowrap">Payment Date</th>
+                        <th className="py-1.5 px-3">Project</th>
+                        <th className="py-1.5 px-3 whitespace-nowrap">Method</th>
+                        <th className="py-1.5 px-3">Reference / Notes</th>
+                        <th className="py-1.5 px-3 text-right whitespace-nowrap">Amount</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {summary.paymentHistory.map((p) => (
+                        <tr key={`${p.transactionId}-${p.id}`}>
+                          <td className="py-1.5 px-3 font-mono text-slate-600 whitespace-nowrap">
+                            {formatDate(p.date)}
+                          </td>
+                          <td className="py-1.5 px-3 font-medium text-slate-800 max-w-[200px] truncate">
+                            {p.projectName}
+                          </td>
+                          <td className="py-1.5 px-3 text-slate-700 whitespace-nowrap">{p.method}</td>
+                          <td className="py-1.5 px-3 text-slate-600 max-w-[220px] truncate">
+                            {[p.reference, p.remarks].filter(Boolean).join(' · ') || '-'}
+                          </td>
+                          <td className="py-1.5 px-3 text-right font-mono font-semibold text-emerald-700 whitespace-nowrap">
+                            {formatCurrency(p.amount, currency)}
                           </td>
                         </tr>
                       ))}

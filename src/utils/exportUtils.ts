@@ -13,6 +13,7 @@ import {
   getDisciplineNote,
   hasDisciplineActivity,
   computeTotalsFromDisciplineFees,
+  getNormalizedPayments,
 } from '../types/transaction';
 import { formatCurrencyPdf, formatDate } from './formatters';
 
@@ -35,7 +36,7 @@ function formatDisciplineCellForExport(
   if (!note && subtotal === 0) return '-';
 
   const feeParts: string[] = [];
-  if (fee.design > 0) feeParts.push(`D:${formatCurrencyPdf(fee.design, currency)}`);
+  if (fee.design > 0) feeParts.push(`D/I:${formatCurrencyPdf(fee.design, currency)}`);
   if (fee.signAndSeal > 0) feeParts.push(`S&S:${formatCurrencyPdf(fee.signAndSeal, currency)}`);
   if (fee.printing > 0) feeParts.push(`P:${formatCurrencyPdf(fee.printing, currency)}`);
 
@@ -72,36 +73,47 @@ export function exportTransactionsToExcel(
   reportTitle: string = 'Transactions_Report',
   companyProfile: CompanyProfile = DEFAULT_COMPANY_PROFILE
 ) {
-  const excelData: Record<string, any>[] = transactions.map((t) => ({
-    'Transaction ID': t.id,
-    'Date': t.date,
-    'Client': t.client,
-    'Project Name': t.projectName,
-    'EE': formatDisciplineCellForExport(t, 'ee', currency),
-    'Pl': formatDisciplineCellForExport(t, 'pl', currency),
-    'St': formatDisciplineCellForExport(t, 'st', currency),
-    'Arch': formatDisciplineCellForExport(t, 'arch', currency),
-    'ECE': formatDisciplineCellForExport(t, 'ece', currency),
-    'ME': formatDisciplineCellForExport(t, 'me', currency),
-    'Solar/Electrical Installation': formatDisciplineCellForExport(t, 'solarElectrical', currency),
-    'Others': formatDisciplineCellForExport(t, 'others', currency),
-    'Purpose': t.purpose,
-    'Bill Amount': t.bill,
-    'Print Cost': t.printCost,
-    'Total Bill': t.totalBill,
-    'Payment Status': t.paymentStatus,
-    'Amount Paid': t.amountPaid,
-    'Outstanding Balance': t.balance,
-    'Payment Date': t.paymentDate || '-',
-    'Payment Method / Ref': [t.paymentMethod, t.paymentReference].filter(Boolean).join(' - ') || '-',
-    'Remarks': t.remarks || '-',
-  }));
+  const excelData: Record<string, any>[] = transactions.map((t) => {
+    const payments = getNormalizedPayments(t);
+    const latestMethodRef = [t.paymentMethod, t.paymentReference].filter(Boolean).join(' - ');
+    const paymentSummaryText =
+      payments.length > 1
+        ? `${payments.length} payments${latestMethodRef ? ` (Latest: ${latestMethodRef})` : ''}`
+        : latestMethodRef || '-';
+
+    return {
+      'Transaction ID': t.id,
+      'Date': t.date,
+      'Client': t.client,
+      'Project Name': t.projectName,
+      'EE': formatDisciplineCellForExport(t, 'ee', currency),
+      'Pl': formatDisciplineCellForExport(t, 'pl', currency),
+      'St': formatDisciplineCellForExport(t, 'st', currency),
+      'Arch': formatDisciplineCellForExport(t, 'arch', currency),
+      'ECE': formatDisciplineCellForExport(t, 'ece', currency),
+      'ME': formatDisciplineCellForExport(t, 'me', currency),
+      'Solar/Electrical Installation': formatDisciplineCellForExport(t, 'solarElectrical', currency),
+      'Others': formatDisciplineCellForExport(t, 'others', currency),
+      'Purpose': t.purpose,
+      'Bill Amount': t.bill,
+      'Print Cost': t.printCost,
+      'Total Bill': t.totalBill,
+      'Payment Status': t.paymentStatus,
+      'Payments Count': payments.length,
+      'Amount Paid': t.amountPaid,
+      'Outstanding Balance': t.balance,
+      'Latest Payment Date': t.paymentDate || '-',
+      'Payment Method / Ref': paymentSummaryText,
+      'Remarks': t.remarks || '-',
+    };
+  });
 
   const totalBill = transactions.reduce((sum, t) => sum + (t.bill || 0), 0);
   const totalPrintCost = transactions.reduce((sum, t) => sum + (t.printCost || 0), 0);
   const grandTotal = transactions.reduce((sum, t) => sum + (t.totalBill || 0), 0);
   const totalPaid = transactions.reduce((sum, t) => sum + (t.amountPaid || 0), 0);
   const totalBalance = transactions.reduce((sum, t) => sum + (t.balance || 0), 0);
+  const totalPaymentCount = transactions.reduce((sum, t) => sum + getNormalizedPayments(t).length, 0);
 
   excelData.push({
     'Transaction ID': 'TOTALS',
@@ -121,9 +133,10 @@ export function exportTransactionsToExcel(
     'Print Cost': totalPrintCost,
     'Total Bill': grandTotal,
     'Payment Status': `${((totalPaid / (grandTotal || 1)) * 100).toFixed(1)}% Collected`,
+    'Payments Count': totalPaymentCount,
     'Amount Paid': totalPaid,
     'Outstanding Balance': totalBalance,
-    'Payment Date': '',
+    'Latest Payment Date': '',
     'Payment Method / Ref': '',
     'Remarks': '',
   });
@@ -149,10 +162,11 @@ export function exportTransactionsToExcel(
     { wch: 12 }, // Print Cost
     { wch: 14 }, // Total Bill
     { wch: 15 }, // Status
+    { wch: 14 }, // Payments Count
     { wch: 14 }, // Amount Paid
     { wch: 14 }, // Balance
-    { wch: 12 }, // Payment Date
-    { wch: 24 }, // Method
+    { wch: 14 }, // Latest Payment Date
+    { wch: 28 }, // Method
     { wch: 32 }, // Remarks
   ];
 
@@ -197,7 +211,7 @@ export function exportTransactionsToExcel(
   ];
   XLSX.utils.book_append_sheet(workbook, summarySheet, 'Client Summary');
 
-  // Sheet 3: Discipline Fee Breakdown (Design / Sign & Seal / Printing)
+  // Sheet 3: Discipline Fee Breakdown (Design / Installation, Sign & Seal, Printing)
   const disciplineRows: Record<string, any>[] = [];
   transactions.forEach((t) => {
     DISCIPLINES.forEach((d) => {
@@ -211,7 +225,7 @@ export function exportTransactionsToExcel(
         'Project Name': t.projectName,
         'Discipline': d.label,
         'Lead / Notes': getDisciplineNote(t, d.key) || '-',
-        'Design': fee.design,
+        'Design / Installation': fee.design,
         'Sign & Seal': fee.signAndSeal,
         'Printing': fee.printing,
         'Discipline Subtotal': subtotal,
@@ -228,12 +242,47 @@ export function exportTransactionsToExcel(
       { wch: 26 },
       { wch: 28 },
       { wch: 20 },
-      { wch: 14 },
+      { wch: 20 },
       { wch: 14 },
       { wch: 14 },
       { wch: 16 },
     ];
     XLSX.utils.book_append_sheet(workbook, discSheet, 'Discipline Breakdown');
+  }
+
+  // Sheet 4: Itemized Partial Payments History
+  const paymentHistoryRows: Record<string, any>[] = [];
+  transactions.forEach((t) => {
+    const payments = getNormalizedPayments(t);
+    payments.forEach((p, idx) => {
+      paymentHistoryRows.push({
+        'Transaction ID': t.id,
+        'Client': t.client,
+        'Project Name': t.projectName,
+        'Installment #': idx + 1,
+        'Payment Date': p.date,
+        'Payment Method': p.method,
+        'Reference #': p.reference || '-',
+        'Notes': p.remarks || '-',
+        'Amount Paid': p.amount,
+      });
+    });
+  });
+
+  if (paymentHistoryRows.length > 0) {
+    const paySheet = XLSX.utils.json_to_sheet(paymentHistoryRows);
+    paySheet['!cols'] = [
+      { wch: 14 },
+      { wch: 22 },
+      { wch: 26 },
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 18 },
+      { wch: 20 },
+      { wch: 28 },
+      { wch: 15 },
+    ];
+    XLSX.utils.book_append_sheet(workbook, paySheet, 'Payments History');
   }
 
   const dateStr = new Date().toISOString().split('T')[0];
@@ -514,15 +563,15 @@ export function exportSingleInvoicePdf(
     autoTable(doc, {
       startY: 202,
       margin: { left: 35, right: 35 },
-      head: [['Discipline', 'Lead / Note', 'Design', 'Sign & Seal', 'Printing', 'Subtotal']],
+      head: [['Discipline', 'Lead / Note', 'Design / Installation', 'Sign & Seal', 'Printing', 'Subtotal']],
       body: discRows,
       theme: 'grid',
       styles: { fontSize: 8, cellPadding: 4.5 },
       headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' },
       columnStyles: {
-        0: { cellWidth: 145 },
-        1: { cellWidth: 95 },
-        2: { cellWidth: 70, halign: 'right' },
+        0: { cellWidth: 135 },
+        1: { cellWidth: 85 },
+        2: { cellWidth: 90, halign: 'right' },
         3: { cellWidth: 70, halign: 'right' },
         4: { cellWidth: 70, halign: 'right' },
         5: { cellWidth: 75, halign: 'right', fontStyle: 'bold' },
@@ -537,7 +586,7 @@ export function exportSingleInvoicePdf(
     autoTable(doc, {
       startY: 202,
       margin: { left: 35, right: 35 },
-      head: [['Discipline / Item', 'Design Lead / Assigned Scope']],
+      head: [['Discipline / Item', 'Design / Installation Lead & Scope']],
       body: discData,
       theme: 'striped',
       styles: { fontSize: 8.5, cellPadding: 4.5 },
@@ -549,7 +598,7 @@ export function exportSingleInvoicePdf(
 
   // Financial Summary Table
   const financeData = [
-    ['Professional Engineering & Design Fee (Design + Sign & Seal)', formatCurrencyPdf(t.bill, currency)],
+    ['Professional Engineering & Installation Fee (Design / Installation + Sign & Seal)', formatCurrencyPdf(t.bill, currency)],
     ['Printing, Blueprints & Document Reproduction (Print Cost)', formatCurrencyPdf(t.printCost, currency)],
     ['TOTAL BILLABLE AMOUNT', formatCurrencyPdf(t.totalBill, currency)],
     ['Amount Paid / Remitted', formatCurrencyPdf(t.amountPaid, currency)],
@@ -571,6 +620,54 @@ export function exportSingleInvoicePdf(
   });
 
   let afterTableY = (doc as any).lastAutoTable.finalY + 16;
+
+  // Payment History / Partial Installments Table
+  const invoicePayments = getNormalizedPayments(t);
+  if (invoicePayments.length > 0) {
+    if (afterTableY > pageHeight - 160) {
+      doc.addPage();
+      afterTableY = 45;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(30, 41, 59);
+    doc.text(
+      `PAYMENT HISTORY / INSTALLMENTS (${invoicePayments.length})`,
+      35,
+      afterTableY
+    );
+
+    const paymentRows = invoicePayments.map((p, idx) => [
+      `#${idx + 1}`,
+      formatDate(p.date),
+      p.method || 'Cash',
+      p.reference || '-',
+      p.remarks || '-',
+      formatCurrencyPdf(p.amount, currency),
+    ]);
+
+    autoTable(doc, {
+      startY: afterTableY + 8,
+      margin: { left: 35, right: 35 },
+      head: [['#', 'Payment Date', 'Method', 'Reference #', 'Notes', 'Amount']],
+      body: paymentRows,
+      theme: 'striped',
+      styles: { fontSize: 8, cellPadding: 4 },
+      headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 28, halign: 'center' },
+        1: { cellWidth: 72 },
+        2: { cellWidth: 85 },
+        3: { cellWidth: 95 },
+        4: { cellWidth: 160 },
+        5: { cellWidth: 85, halign: 'right', fontStyle: 'bold' },
+      },
+    });
+
+    afterTableY = (doc as any).lastAutoTable.finalY + 16;
+  }
+
   if (t.remarks) {
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(8.5);
@@ -774,6 +871,11 @@ export function exportClientStatementOfAccountPdf(
     const signSealVal = f.hasAnyFee ? f.signAndSealTotal : 0;
     const printVal = f.hasAnyFee ? f.printingTotal : t.printCost || 0;
     const projectDesc = t.purpose ? `${t.projectName}\n${t.purpose}` : t.projectName;
+    const pCount = getNormalizedPayments(t).length;
+    const paidText =
+      pCount > 1
+        ? `${formatCurrencyPdf(t.amountPaid, currency)}\n(${pCount} pmts)`
+        : formatCurrencyPdf(t.amountPaid, currency);
 
     return [
       t.date,
@@ -783,7 +885,7 @@ export function exportClientStatementOfAccountPdf(
       signSealVal > 0 ? formatCurrencyPdf(signSealVal, currency) : '-',
       printVal > 0 ? formatCurrencyPdf(printVal, currency) : '-',
       formatCurrencyPdf(t.totalBill, currency),
-      formatCurrencyPdf(t.amountPaid, currency),
+      paidText,
       formatCurrencyPdf(t.balance, currency),
       t.paymentStatus,
     ];
@@ -805,7 +907,7 @@ export function exportClientStatementOfAccountPdf(
   autoTable(doc, {
     startY: 214,
     margin: { left: 35, right: 35, bottom: 45 },
-    head: [['Date', 'Ref #', 'Project / Purpose', 'Design', 'Sign & Seal', 'Printing', 'Total Bill', 'Paid', 'Balance', 'Status']],
+    head: [['Date', 'Ref #', 'Project / Purpose', 'Design / Installation', 'Sign & Seal', 'Printing', 'Total Bill', 'Paid', 'Balance', 'Status']],
     body: itemRows,
     theme: 'grid',
     styles: {
@@ -824,16 +926,16 @@ export function exportClientStatementOfAccountPdf(
       fillColor: [248, 250, 252],
     },
     columnStyles: {
-      0: { cellWidth: 46 },
-      1: { cellWidth: 46 },
-      2: { cellWidth: 112 },
-      3: { cellWidth: 48, halign: 'right' },
+      0: { cellWidth: 44 },
+      1: { cellWidth: 44 },
+      2: { cellWidth: 104 },
+      3: { cellWidth: 54, halign: 'right' },
       4: { cellWidth: 48, halign: 'right' },
-      5: { cellWidth: 45, halign: 'right' },
+      5: { cellWidth: 44, halign: 'right' },
       6: { cellWidth: 50, halign: 'right', fontStyle: 'bold' },
-      7: { cellWidth: 45, halign: 'right' },
+      7: { cellWidth: 47, halign: 'right' },
       8: { cellWidth: 48, halign: 'right', fontStyle: 'bold' },
-      9: { cellWidth: 37, halign: 'center' },
+      9: { cellWidth: 42, halign: 'center' },
     },
     didParseCell: (data) => {
       if (data.row.index === itemRows.length - 1 && data.section === 'body') {
@@ -890,14 +992,14 @@ export function exportClientStatementOfAccountPdf(
       autoTable(doc, {
         startY: cursorY + 8,
         margin: { left: 35, right: 35, bottom: 45 },
-        head: [['Discipline', 'Design', 'Sign & Seal', 'Printing', 'Discipline Total']],
+        head: [['Discipline', 'Design / Installation', 'Sign & Seal', 'Printing', 'Discipline Total']],
         body: discBody,
         theme: 'striped',
         styles: { fontSize: 7.5, cellPadding: 4 },
         headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' },
         columnStyles: {
-          0: { cellWidth: 205 },
-          1: { cellWidth: 80, halign: 'right' },
+          0: { cellWidth: 190 },
+          1: { cellWidth: 95, halign: 'right' },
           2: { cellWidth: 80, halign: 'right' },
           3: { cellWidth: 80, halign: 'right' },
           4: { cellWidth: 80, halign: 'right', fontStyle: 'bold' },
@@ -906,6 +1008,65 @@ export function exportClientStatementOfAccountPdf(
 
       cursorY = (doc as any).lastAutoTable.finalY + 18;
     }
+  }
+
+  // Section 3: Payment Receipts / Partial Payments History
+  const soaPayments = sortedTxs
+    .flatMap((t) =>
+      getNormalizedPayments(t).map((p) => ({
+        date: p.date,
+        projectName: t.projectName,
+        method: p.method || 'Cash',
+        reference: p.reference || '-',
+        remarks: p.remarks || '-',
+        amount: p.amount,
+      }))
+    )
+    .sort((a, b) => a.date.localeCompare(b.date));
+
+  if (soaPayments.length > 0) {
+    if (cursorY > pageHeight - 160) {
+      doc.addPage();
+      cursorY = 45;
+    }
+
+    doc.setFont('helvetica', 'bold');
+    doc.setFontSize(9.5);
+    doc.setTextColor(30, 41, 59);
+    doc.text(
+      `PAYMENT RECEIPTS / PARTIAL PAYMENTS HISTORY (${soaPayments.length})`,
+      35,
+      cursorY
+    );
+
+    const paymentBody = soaPayments.map((p) => [
+      formatDate(p.date),
+      p.projectName,
+      p.method,
+      p.reference,
+      p.remarks,
+      formatCurrencyPdf(p.amount, currency),
+    ]);
+
+    autoTable(doc, {
+      startY: cursorY + 8,
+      margin: { left: 35, right: 35, bottom: 45 },
+      head: [['Payment Date', 'Project', 'Method', 'Reference #', 'Notes', 'Amount']],
+      body: paymentBody,
+      theme: 'striped',
+      styles: { fontSize: 7.5, cellPadding: 3.8, overflow: 'linebreak' },
+      headStyles: { fillColor: [51, 65, 85], textColor: [255, 255, 255], fontStyle: 'bold' },
+      columnStyles: {
+        0: { cellWidth: 64 },
+        1: { cellWidth: 120 },
+        2: { cellWidth: 74 },
+        3: { cellWidth: 82 },
+        4: { cellWidth: 105 },
+        5: { cellWidth: 80, halign: 'right', fontStyle: 'bold' },
+      },
+    });
+
+    cursorY = (doc as any).lastAutoTable.finalY + 18;
   }
 
   // Optional Notes / Payment Instructions
@@ -990,19 +1151,21 @@ export function exportClientStatementOfAccountExcel(
 
   const rows: Record<string, any>[] = sortedTxs.map((t) => {
     const f = computeTotalsFromDisciplineFees(t.disciplineFees);
+    const payments = getNormalizedPayments(t);
     return {
       'Date': t.date,
       'Ref #': t.id,
       'Project Name': t.projectName,
       'Purpose': t.purpose,
-      'Design Fees': f.hasAnyFee ? f.designTotal : t.bill || 0,
+      'Design / Installation Fees': f.hasAnyFee ? f.designTotal : t.bill || 0,
       'Sign & Seal Fees': f.hasAnyFee ? f.signAndSealTotal : 0,
       'Printing Fees': f.hasAnyFee ? f.printingTotal : t.printCost || 0,
       'Total Bill': t.totalBill,
+      'Payments Count': payments.length,
       'Amount Paid': t.amountPaid,
       'Balance Due': t.balance,
       'Status': t.paymentStatus,
-      'Payment Date': t.paymentDate || '-',
+      'Latest Payment Date': t.paymentDate || '-',
       'Remarks': t.remarks || '-',
     };
   });
@@ -1010,6 +1173,7 @@ export function exportClientStatementOfAccountExcel(
   const totalBilled = sortedTxs.reduce((s, t) => s + (t.totalBill || 0), 0);
   const totalPaid = sortedTxs.reduce((s, t) => s + (t.amountPaid || 0), 0);
   const totalBalance = sortedTxs.reduce((s, t) => s + (t.balance || 0), 0);
+  const totalPaymentCount = sortedTxs.reduce((s, t) => s + getNormalizedPayments(t).length, 0);
   const totalDesign = sortedTxs.reduce((s, t) => {
     const f = computeTotalsFromDisciplineFees(t.disciplineFees);
     return s + (f.hasAnyFee ? f.designTotal : t.bill || 0);
@@ -1028,14 +1192,15 @@ export function exportClientStatementOfAccountExcel(
     'Ref #': `${sortedTxs.length} projects`,
     'Project Name': clientName,
     'Purpose': `${companyProfile.companyName} | ${options.scopeLabel}`,
-    'Design Fees': totalDesign,
+    'Design / Installation Fees': totalDesign,
     'Sign & Seal Fees': totalSignSeal,
     'Printing Fees': totalPrinting,
     'Total Bill': totalBilled,
+    'Payments Count': totalPaymentCount,
     'Amount Paid': totalPaid,
     'Balance Due': totalBalance,
     'Status': totalBalance > 0 ? 'Balance Due' : 'Settled',
-    'Payment Date': statementDate,
+    'Latest Payment Date': statementDate,
     'Remarks': options.notes || '',
   });
 
@@ -1046,7 +1211,7 @@ export function exportClientStatementOfAccountExcel(
     { wch: 14 },
     { wch: 26 },
     { wch: 30 },
-    { wch: 14 },
+    { wch: 24 },
     { wch: 16 },
     { wch: 14 },
     { wch: 14 },
@@ -1054,6 +1219,7 @@ export function exportClientStatementOfAccountExcel(
     { wch: 14 },
     { wch: 14 },
     { wch: 14 },
+    { wch: 16 },
     { wch: 26 },
   ];
   XLSX.utils.book_append_sheet(wb, ws, 'Statement of Account');
@@ -1074,7 +1240,7 @@ export function exportClientStatementOfAccountExcel(
     if (subtotal > 0) {
       discRows.push({
         'Discipline': d.label,
-        'Design': design,
+        'Design / Installation': design,
         'Sign & Seal': signAndSeal,
         'Printing': printing,
         'Subtotal': subtotal,
@@ -1087,13 +1253,48 @@ export function exportClientStatementOfAccountExcel(
     const discWs = XLSX.utils.json_to_sheet(discRows);
     discWs['!cols'] = [
       { wch: 30 },
-      { wch: 14 },
+      { wch: 20 },
       { wch: 14 },
       { wch: 14 },
       { wch: 16 },
       { wch: 10 },
     ];
     XLSX.utils.book_append_sheet(wb, discWs, 'Discipline Summary');
+  }
+
+  // Sheet 3: Partial Payments History for this client
+  const paymentRows: Record<string, any>[] = [];
+  sortedTxs.forEach((t) => {
+    getNormalizedPayments(t).forEach((p, idx) => {
+      paymentRows.push({
+        'Payment Date': p.date,
+        'Ref #': t.id,
+        'Project Name': t.projectName,
+        'Installment #': idx + 1,
+        'Payment Method': p.method,
+        'Payment Reference': p.reference || '-',
+        'Notes': p.remarks || '-',
+        'Amount Paid': p.amount,
+        'Currency': currency,
+      });
+    });
+  });
+
+  if (paymentRows.length > 0) {
+    paymentRows.sort((a, b) => String(a['Payment Date']).localeCompare(String(b['Payment Date'])));
+    const payWs = XLSX.utils.json_to_sheet(paymentRows);
+    payWs['!cols'] = [
+      { wch: 14 },
+      { wch: 14 },
+      { wch: 26 },
+      { wch: 14 },
+      { wch: 18 },
+      { wch: 20 },
+      { wch: 28 },
+      { wch: 15 },
+      { wch: 10 },
+    ];
+    XLSX.utils.book_append_sheet(wb, payWs, 'Payments History');
   }
 
   XLSX.writeFile(wb, `SOA_${sanitizeFileSegment(clientName)}_${statementDate}.xlsx`);

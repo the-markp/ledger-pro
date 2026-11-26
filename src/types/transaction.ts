@@ -10,8 +10,18 @@ export type DisciplineKey =
   | 'solarElectrical'
   | 'others';
 
+export interface PaymentRecord {
+  id: string;
+  amount: number;
+  date: string; // YYYY-MM-DD
+  method: string; // Cash, Bank Transfer, Check, Online / E-Wallet, Wire Transfer
+  reference?: string;
+  remarks?: string;
+  recordedAt: string;
+}
+
 export interface DisciplineFeeBreakdown {
-  design: number;
+  design: number; // Design / Installation
   signAndSeal: number;
   printing: number;
 }
@@ -159,6 +169,61 @@ export function computeTotalsFromDisciplineFees(fees?: DisciplineFeesMap | null)
   };
 }
 
+export function getNormalizedPayments(t: Partial<Transaction> | null | undefined): PaymentRecord[] {
+  if (!t) return [];
+  if (Array.isArray(t.payments) && t.payments.length > 0) {
+    return t.payments;
+  }
+  const legacyPaid = Number(t.amountPaid) || 0;
+  if (legacyPaid > 0) {
+    return [
+      {
+        id: `PAY-LEGACY-${t.id || '0'}`,
+        amount: Number(legacyPaid.toFixed(2)),
+        date: t.paymentDate || t.date || new Date().toISOString().split('T')[0],
+        method: t.paymentMethod || 'Bank Transfer',
+        reference: t.paymentReference || '',
+        remarks: 'Recorded payment',
+        recordedAt: t.updatedAt || t.createdAt || new Date().toISOString(),
+      },
+    ];
+  }
+  return [];
+}
+
+export function computePaymentSummary(
+  totalBill: number,
+  payments: PaymentRecord[],
+  currentStatus?: PaymentStatus
+) {
+  const safeTotal = Math.max(0, Number(totalBill) || 0);
+  const amountPaid = Number(
+    payments.reduce((sum, p) => sum + (Number(p.amount) || 0), 0).toFixed(2)
+  );
+  const balance = Math.max(0, Number((safeTotal - amountPaid).toFixed(2)));
+
+  let paymentStatus: PaymentStatus = currentStatus || 'Pending';
+  if (amountPaid >= safeTotal && safeTotal > 0) {
+    paymentStatus = 'Paid';
+  } else if (amountPaid > 0 && amountPaid < safeTotal) {
+    paymentStatus = currentStatus === 'Overdue' ? 'Overdue' : 'Partially Paid';
+  } else if (amountPaid === 0) {
+    paymentStatus = currentStatus === 'Overdue' ? 'Overdue' : 'Pending';
+  }
+
+  const sorted = [...payments].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const latest = sorted.length > 0 ? sorted[sorted.length - 1] : null;
+
+  return {
+    amountPaid,
+    balance,
+    paymentStatus,
+    paymentDate: latest?.date || undefined,
+    paymentMethod: latest?.method || undefined,
+    paymentReference: latest?.reference || undefined,
+  };
+}
+
 export interface Transaction {
   id: string;
   date: string; // YYYY-MM-DD
@@ -175,7 +240,7 @@ export interface Transaction {
   solarElectrical?: string;  // Solar/Electrical Installation
   others: string;            // Other disciplines/consultants
 
-  // Structured per-discipline charges (Design, Sign & Seal, Printing)
+  // Structured per-discipline charges (Design / Installation, Sign & Seal, Printing)
   disciplineFees?: DisciplineFeesMap;
 
   purpose: string;
@@ -185,13 +250,14 @@ export interface Transaction {
   printCost: number;
   totalBill: number; // bill + printCost
 
-  // Payment tracking
+  // Payment tracking (supports multiple partial payments)
   paymentStatus: PaymentStatus;
   amountPaid: number;
   balance: number; // totalBill - amountPaid
   paymentDate?: string;
   paymentMethod?: string; // Cash, Bank Transfer, Check, GCash, Wire
   paymentReference?: string;
+  payments?: PaymentRecord[];
 
   remarks: string;
   createdAt: string;

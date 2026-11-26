@@ -161,7 +161,7 @@ export const ExportModal: React.FC<ExportModalProps> = ({
             <div className="flex justify-between gap-2">
               <span className="shrink-0">Included columns:</span>
               <span className="text-slate-700 text-right">
-                Date, Client, Project, EE, Pl, St, Arch, ECE, ME, Solar/Electrical Installation, Others (Design / Sign &amp; Seal / Printing), Purpose, Bill, Print Cost, Total Bill, Status, Remarks
+                Date, Client, Project, EE, Pl, St, Arch, ECE, ME, Solar/Electrical Installation, Others (Design / Installation, Sign &amp; Seal, Printing), Purpose, Bill, Print Cost, Total Bill, Status, Partial Payments History, Remarks
               </span>
             </div>
           </div>

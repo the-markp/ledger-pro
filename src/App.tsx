@@ -14,7 +14,16 @@ import { ChangePinModal } from './components/ChangePinModal';
 import { BackupRestoreModal } from './components/BackupRestoreModal';
 import { AndroidCompanionModal } from './components/AndroidCompanionModal';
 import { LoginScreen } from './components/LoginScreen';
-import { Transaction, Currency, PaymentStatus, CompanyProfile, DEFAULT_COMPANY_PROFILE } from './types/transaction';
+import {
+  Transaction,
+  Currency,
+  PaymentStatus,
+  PaymentRecord,
+  CompanyProfile,
+  DEFAULT_COMPANY_PROFILE,
+  getNormalizedPayments,
+  computePaymentSummary,
+} from './types/transaction';
 import { User, INITIAL_USERS, ROLE_PERMISSIONS } from './types/auth';
 import { INITIAL_TRANSACTIONS } from './data/seedData';
 
@@ -92,7 +101,12 @@ export default function App() {
   const [editingTransaction, setEditingTransaction] = useState<Transaction | null>(null);
 
   const [isPaymentModalOpen, setIsPaymentModalOpen] = useState(false);
-  const [paymentTargetTransaction, setPaymentTargetTransaction] = useState<Transaction | null>(null);
+  const [paymentTargetId, setPaymentTargetId] = useState<string | null>(null);
+
+  const paymentTargetTransaction = useMemo(
+    () => (paymentTargetId ? transactions.find((t) => t.id === paymentTargetId) || null : null),
+    [transactions, paymentTargetId]
+  );
 
   const [isExportModalOpen, setIsExportModalOpen] = useState(false);
   const [isStatementModalOpen, setIsStatementModalOpen] = useState(false);
@@ -320,28 +334,58 @@ export default function App() {
 
   // Handler: Batch status update
   const handleBatchStatusUpdate = (ids: string[], status: PaymentStatus) => {
+    const now = new Date().toISOString();
+    const today = now.split('T')[0];
+
     setTransactions((prev) =>
       prev.map((t) => {
         if (!ids.includes(t.id)) return t;
         const total = t.totalBill || 0;
+        let nextPayments = getNormalizedPayments(t);
         let amountPaid = t.amountPaid;
         let balance = t.balance;
 
         if (status === 'Paid') {
+          const remaining = Math.max(0, Number((total - amountPaid).toFixed(2)));
+          if (remaining > 0) {
+            nextPayments = [
+              ...nextPayments,
+              {
+                id: `PAY-${Date.now()}-${nextPayments.length + 1}`,
+                amount: remaining,
+                date: today,
+                method: t.paymentMethod || 'Bank Transfer',
+                reference: t.paymentReference || '',
+                remarks: 'Marked paid in full',
+                recordedAt: now,
+              },
+            ];
+          }
           amountPaid = total;
           balance = 0;
         } else if (status === 'Pending') {
+          nextPayments = [];
           amountPaid = 0;
           balance = total;
         }
 
-        return {
+        const updated: Transaction = {
           ...t,
+          payments: nextPayments,
           paymentStatus: status,
           amountPaid,
           balance,
-          updatedAt: new Date().toISOString(),
+          paymentDate: status === 'Paid' ? today : status === 'Pending' ? undefined : t.paymentDate,
+          updatedAt: now,
         };
+
+        fetch(`/api/transactions/${encodeURIComponent(t.id)}`, {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(updated),
+        }).catch(() => {});
+
+        return updated;
       })
     );
   };
@@ -354,7 +398,7 @@ export default function App() {
 
   // Handler: Open quick payment
   const handleOpenPayment = (t: Transaction) => {
-    setPaymentTargetTransaction(t);
+    setPaymentTargetId(t.id);
     setIsPaymentModalOpen(true);
   };
 
@@ -367,11 +411,15 @@ export default function App() {
     date: string,
     remarks?: string
   ) => {
+    const now = new Date().toISOString();
+    const paymentId = `PAY-${Date.now()}`;
+
     // Sync payment to backend PostgreSQL
     fetch(`/api/transactions/${encodeURIComponent(transactionId)}/payment`, {
       method: 'PATCH',
       headers: { 'Content-Type': 'application/json' },
       body: JSON.stringify({
+        id: paymentId,
         amountPaid: amount,
         paymentMethod: method,
         paymentReference: reference,
@@ -380,23 +428,31 @@ export default function App() {
       }),
     }).catch(() => {});
 
-    setTransactions(prev =>
-      prev.map(t => {
+    setTransactions((prev) =>
+      prev.map((t) => {
         if (t.id === transactionId) {
-          const newPaid = (t.amountPaid || 0) + amount;
-          const newBalance = Math.max(0, (t.totalBill || 0) - newPaid);
-          const newStatus: PaymentStatus =
-            newBalance === 0 ? 'Paid' : newPaid > 0 ? 'Partially Paid' : 'Pending';
+          const existing = getNormalizedPayments(t);
+          const entry: PaymentRecord = {
+            id: paymentId,
+            amount: Number(amount.toFixed(2)),
+            date,
+            method,
+            reference,
+            remarks: remarks || '',
+            recordedAt: now,
+          };
+          const nextPayments = [...existing, entry];
+          const summary = computePaymentSummary(t.totalBill, nextPayments, t.paymentStatus);
           return {
             ...t,
-            amountPaid: newPaid,
-            balance: newBalance,
-            paymentStatus: newStatus,
-            paymentDate: date,
-            paymentMethod: method,
-            paymentReference: reference,
-            remarks: remarks ? `${t.remarks ? t.remarks + ' | ' : ''}${remarks}` : t.remarks,
-            updatedAt: new Date().toISOString(),
+            payments: nextPayments,
+            amountPaid: summary.amountPaid,
+            balance: summary.balance,
+            paymentStatus: summary.paymentStatus,
+            paymentDate: summary.paymentDate,
+            paymentMethod: summary.paymentMethod,
+            paymentReference: summary.paymentReference,
+            updatedAt: now,
           };
         }
         return t;

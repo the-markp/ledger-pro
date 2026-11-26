@@ -31,6 +31,7 @@ import {
   getDisciplineSubtotal,
   getDisciplineNote,
   hasDisciplineActivity,
+  getNormalizedPayments,
 } from '../types/transaction';
 import { User, ROLE_PERMISSIONS } from '../types/auth';
 import { formatCurrency, formatDate } from '../utils/formatters';
@@ -683,7 +684,7 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
                               const tooltip = [
                                 `${d.label}`,
                                 note ? `Lead: ${note}` : null,
-                                fee.design > 0 ? `Design: ${formatCurrency(fee.design, currency)}` : null,
+                                fee.design > 0 ? `Design / Installation: ${formatCurrency(fee.design, currency)}` : null,
                                 fee.signAndSeal > 0 ? `Sign & Seal: ${formatCurrency(fee.signAndSeal, currency)}` : null,
                                 fee.printing > 0 ? `Printing: ${formatCurrency(fee.printing, currency)}` : null,
                               ]
@@ -714,7 +715,7 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
                             const fee = getDisciplineFee(t, d.key);
                             const sub = getDisciplineSubtotal(fee);
                             const tooltip = sub > 0
-                              ? `Design: ${formatCurrency(fee.design, currency)} | Sign & Seal: ${formatCurrency(fee.signAndSeal, currency)} | Printing: ${formatCurrency(fee.printing, currency)}`
+                              ? `Design / Installation: ${formatCurrency(fee.design, currency)} | Sign & Seal: ${formatCurrency(fee.signAndSeal, currency)} | Printing: ${formatCurrency(fee.printing, currency)}`
                               : note || undefined;
                             return (
                               <td
@@ -778,20 +779,54 @@ export const TransactionsTable: React.FC<TransactionsTableProps> = ({
                       </td>
 
                       {/* Amount Paid / Balance */}
-                      <td className="p-3 text-right whitespace-nowrap font-mono">
-                        <div className="text-emerald-700 font-medium">
-                          {formatCurrency(t.amountPaid, currency)}
-                        </div>
-                        {t.balance > 0 ? (
-                          <div className="text-[10px] text-rose-600">
-                            Bal: {formatCurrency(t.balance, currency)}
-                          </div>
-                        ) : (
-                          <div className="text-[10px] text-slate-400">
-                            Settled
-                          </div>
-                        )}
-                      </td>
+                      {(() => {
+                        const paymentRecords = getNormalizedPayments(t);
+                        const paymentTooltip =
+                          paymentRecords.length > 0
+                            ? paymentRecords
+                                .map(
+                                  (p, idx) =>
+                                    `#${idx + 1}: ${formatDate(p.date)} · ${p.method}${p.reference ? ` (${p.reference})` : ''} · ${formatCurrency(p.amount, currency)}`
+                                )
+                                .join('\n')
+                            : undefined;
+
+                        return (
+                          <td
+                            className="p-3 text-right whitespace-nowrap font-mono"
+                            title={paymentTooltip}
+                          >
+                            <div className="text-emerald-700 font-medium">
+                              {formatCurrency(t.amountPaid, currency)}
+                            </div>
+                            {t.balance > 0 ? (
+                              <div className="text-[10px] text-rose-600">
+                                Bal: {formatCurrency(t.balance, currency)}
+                              </div>
+                            ) : (
+                              <div className="text-[10px] text-slate-400">
+                                Settled
+                              </div>
+                            )}
+                            {paymentRecords.length > 1 && (
+                              canEdit ? (
+                                <button
+                                  type="button"
+                                  onClick={() => onOpenPaymentModal(t)}
+                                  className="mt-0.5 text-[10px] font-sans font-medium text-indigo-600 hover:text-indigo-800 hover:underline cursor-pointer"
+                                  title="View or manage partial payments"
+                                >
+                                  {paymentRecords.length} installments
+                                </button>
+                              ) : (
+                                <div className="mt-0.5 text-[10px] font-sans text-slate-500">
+                                  {paymentRecords.length} installments
+                                </div>
+                              )
+                            )}
+                          </td>
+                        );
+                      })()}
 
                       {/* Remarks */}
                       <td className="p-3 text-slate-600 max-w-[180px] truncate" title={t.remarks}>

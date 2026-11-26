@@ -179,7 +179,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                 Discipline Engagement &amp; Fee Breakdown
               </h3>
               <p className="text-[11px] text-slate-400 mt-0.5">
-                Projects and itemized Design / Sign &amp; Seal / Printing totals per discipline
+                Projects and itemized Design / Installation, Sign &amp; Seal, and Printing totals per discipline
               </p>
             </div>
             <Layers className="w-4 h-4 text-slate-400" />
@@ -215,7 +215,7 @@ export const AnalyticsView: React.FC<AnalyticsViewProps> = ({
                   </div>
                   {m.total > 0 && (
                     <div className="flex flex-wrap gap-x-3 text-[10px] font-mono text-slate-500">
-                      <span>Design: {formatCurrency(m.design, currency)}</span>
+                      <span>Design / Installation: {formatCurrency(m.design, currency)}</span>
                       <span>Sign &amp; Seal: {formatCurrency(m.signAndSeal, currency)}</span>
                       <span>Printing: {formatCurrency(m.printing, currency)}</span>
                     </div>

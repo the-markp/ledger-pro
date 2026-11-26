@@ -188,17 +188,31 @@ apiRouter.delete('/transactions/:id', async (req, res) => {
 
 apiRouter.patch('/transactions/:id/payment', async (req, res) => {
   try {
-    const { amountPaid, paymentMethod, paymentReference, paymentDate, remarks } = req.body || {};
-    if (amountPaid === undefined || Number(amountPaid) <= 0) {
+    const { amountPaid, amount, paymentMethod, paymentReference, paymentDate, remarks, id: paymentId } = req.body || {};
+    const parsedAmount = Number(amountPaid ?? amount);
+    if (!Number.isFinite(parsedAmount) || parsedAmount <= 0) {
       return res.status(400).json({ error: 'A positive payment amount is required' });
     }
     const updated = await db.recordPayment(req.params.id, {
-      amountPaid: Number(amountPaid),
+      id: paymentId,
+      amountPaid: parsedAmount,
       paymentMethod,
       paymentReference,
       paymentDate,
       remarks
     });
+    if (!updated) {
+      return res.status(404).json({ error: 'Transaction not found' });
+    }
+    res.json(updated);
+  } catch (err) {
+    res.status(500).json({ error: err.message });
+  }
+});
+
+apiRouter.delete('/transactions/:id/payment/:paymentId', async (req, res) => {
+  try {
+    const updated = await db.deletePayment(req.params.id, req.params.paymentId);
     if (!updated) {
       return res.status(404).json({ error: 'Transaction not found' });
     }

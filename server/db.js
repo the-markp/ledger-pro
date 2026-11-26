@@ -66,6 +66,61 @@ function sanitizeDisciplineFees(raw) {
   return clean;
 }
 
+function sanitizePayments(raw) {
+  if (!Array.isArray(raw)) return [];
+  const clean = [];
+  const limit = Math.min(raw.length, 200);
+  for (let i = 0; i < limit; i++) {
+    const item = raw[i];
+    if (!item || typeof item !== 'object' || Array.isArray(item)) continue;
+    const amount = toSafeNonNegativeAmount(item.amount);
+    if (amount <= 0) continue;
+    clean.push({
+      id: typeof item.id === 'string' && item.id.trim()
+        ? item.id.trim().slice(0, 80)
+        : `PAY-${Date.now()}-${i + 1}`,
+      amount,
+      date: typeof item.date === 'string' && item.date.trim()
+        ? item.date.trim().slice(0, 30)
+        : new Date().toISOString().split('T')[0],
+      method: typeof item.method === 'string' && item.method.trim()
+        ? item.method.trim().slice(0, 80)
+        : 'Bank Transfer',
+      reference: typeof item.reference === 'string' ? item.reference.trim().slice(0, 120) : '',
+      remarks: typeof item.remarks === 'string' ? item.remarks.trim().slice(0, 500) : '',
+      recordedAt: typeof item.recordedAt === 'string' && item.recordedAt.trim()
+        ? item.recordedAt.trim().slice(0, 50)
+        : new Date().toISOString()
+    });
+  }
+  return clean;
+}
+
+function summarizePayments(totalBill, payments, requestedStatus) {
+  const amountPaid = Number(
+    payments.reduce((sum, p) => sum + toSafeNonNegativeAmount(p.amount), 0).toFixed(2)
+  );
+  const balance = Math.max(0, Number((totalBill - amountPaid).toFixed(2)));
+  let paymentStatus = requestedStatus || 'Pending';
+  if (amountPaid >= totalBill && totalBill > 0) {
+    paymentStatus = 'Paid';
+  } else if (amountPaid > 0 && amountPaid < totalBill) {
+    paymentStatus = requestedStatus === 'Overdue' ? 'Overdue' : 'Partially Paid';
+  } else if (amountPaid === 0) {
+    paymentStatus = requestedStatus === 'Overdue' ? 'Overdue' : 'Pending';
+  }
+  const sorted = [...payments].sort((a, b) => (a.date || '').localeCompare(b.date || ''));
+  const latest = sorted.length > 0 ? sorted[sorted.length - 1] : null;
+  return {
+    amountPaid,
+    balance,
+    paymentStatus,
+    paymentDate: latest ? latest.date : '',
+    paymentMethod: latest ? latest.method : '',
+    paymentReference: latest ? (latest.reference || '') : ''
+  };
+}
+
 // Helper: map DB row to Transaction object
 function rowToTransaction(r) {
   if (!r) return null;
@@ -77,6 +132,17 @@ function rowToTransaction(r) {
       parsedFees = sanitizeDisciplineFees(JSON.parse(r.discipline_fees));
     } catch {
       parsedFees = {};
+    }
+  }
+
+  let parsedPayments = [];
+  if (Array.isArray(r.payments)) {
+    parsedPayments = sanitizePayments(r.payments);
+  } else if (typeof r.payments === 'string') {
+    try {
+      parsedPayments = sanitizePayments(JSON.parse(r.payments));
+    } catch {
+      parsedPayments = [];
     }
   }
 
@@ -104,6 +170,7 @@ function rowToTransaction(r) {
     paymentDate: r.payment_date || '',
     paymentMethod: r.payment_method || '',
     paymentReference: r.payment_reference || '',
+    payments: parsedPayments,
     remarks: r.remarks || '',
     createdAt: r.created_at ? new Date(r.created_at).toISOString() : new Date().toISOString(),
     updatedAt: r.updated_at ? new Date(r.updated_at).toISOString() : new Date().toISOString()
@@ -259,6 +326,7 @@ class Database {
             payment_date VARCHAR(50),
             payment_method VARCHAR(100),
             payment_reference VARCHAR(100),
+            payments JSONB DEFAULT '[]'::jsonb,
             remarks TEXT,
             created_at TIMESTAMPTZ DEFAULT NOW(),
             updated_at TIMESTAMPTZ DEFAULT NOW()
@@ -266,6 +334,7 @@ class Database {
 
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS solar_electrical VARCHAR(255);
           ALTER TABLE transactions ADD COLUMN IF NOT EXISTS discipline_fees JSONB DEFAULT '{}'::jsonb;
+          ALTER TABLE transactions ADD COLUMN IF NOT EXISTS payments JSONB DEFAULT '[]'::jsonb;
 
           CREATE TABLE IF NOT EXISTS company_profile (
             id INT PRIMARY KEY DEFAULT 1,
@@ -316,15 +385,16 @@ class Database {
               `INSERT INTO transactions (
                 id, date, client, project_name, ee, pl, st, arch, ece, me, solar_electrical, others,
                 discipline_fees, purpose, bill, print_cost, total_bill, payment_status, amount_paid,
-                balance, payment_date, payment_method, payment_reference, remarks,
+                balance, payment_date, payment_method, payment_reference, payments, remarks,
                 created_at, updated_at
-              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)
               ON CONFLICT (id) DO NOTHING`,
               [
                 t.id, t.date, t.client, t.projectName, t.ee, t.pl, t.st, t.arch, t.ece, t.me, t.solarElectrical || '', t.others,
                 JSON.stringify(sanitizeDisciplineFees(t.disciplineFees)),
                 t.purpose, t.bill, t.printCost, t.totalBill, t.paymentStatus, t.amountPaid,
-                t.balance, t.paymentDate || null, t.paymentMethod || null, t.paymentReference || null, t.remarks || null,
+                t.balance, t.paymentDate || null, t.paymentMethod || null, t.paymentReference || null,
+                JSON.stringify(sanitizePayments(t.payments)), t.remarks || null,
                 t.createdAt, t.updatedAt
               ]
             );
@@ -481,17 +551,37 @@ class Database {
       ? Number(feePrinting.toFixed(2))
       : toSafeNonNegativeAmount(txData.printCost);
     const totalBill = Number((bill + printCost).toFixed(2));
-    const amountPaid = toSafeNonNegativeAmount(txData.amountPaid);
-    const balance = Math.max(0, Number((totalBill - amountPaid).toFixed(2)));
-    
-    let paymentStatus = txData.paymentStatus || 'Pending';
-    if (amountPaid >= totalBill && totalBill > 0) {
-      paymentStatus = 'Paid';
-    } else if (amountPaid > 0 && amountPaid < totalBill) {
-      paymentStatus = 'Partially Paid';
-    }
 
     const now = new Date().toISOString();
+    let payments = sanitizePayments(txData.payments);
+    const rawAmountPaid = toSafeNonNegativeAmount(txData.amountPaid);
+
+    // If caller sent an initial amountPaid without an explicit payments array, seed the first installment
+    if (payments.length === 0 && rawAmountPaid > 0) {
+      payments = [
+        {
+          id: `PAY-${Date.now()}-1`,
+          amount: rawAmountPaid,
+          date: txData.paymentDate || txData.date || now.split('T')[0],
+          method: txData.paymentMethod || 'Bank Transfer',
+          reference: txData.paymentReference || '',
+          remarks: 'Initial payment',
+          recordedAt: now
+        }
+      ];
+    }
+
+    const summary = payments.length > 0
+      ? summarizePayments(totalBill, payments, txData.paymentStatus)
+      : {
+          amountPaid: 0,
+          balance: totalBill,
+          paymentStatus: txData.paymentStatus === 'Overdue' ? 'Overdue' : 'Pending',
+          paymentDate: txData.paymentDate || '',
+          paymentMethod: txData.paymentMethod || '',
+          paymentReference: txData.paymentReference || ''
+        };
+
     const newTx = {
       ...txData,
       id,
@@ -504,12 +594,16 @@ class Database {
       solarElectrical: typeof txData.solarElectrical === 'string' ? txData.solarElectrical.trim() : '',
       others: typeof txData.others === 'string' ? txData.others.trim() : '',
       disciplineFees,
+      payments,
       bill,
       printCost,
       totalBill,
-      amountPaid,
-      balance,
-      paymentStatus,
+      amountPaid: summary.amountPaid,
+      balance: summary.balance,
+      paymentStatus: summary.paymentStatus,
+      paymentDate: summary.paymentDate || txData.paymentDate || '',
+      paymentMethod: summary.paymentMethod || txData.paymentMethod || '',
+      paymentReference: summary.paymentReference || txData.paymentReference || '',
       createdAt: now,
       updatedAt: now
     };
@@ -520,15 +614,16 @@ class Database {
           `INSERT INTO transactions (
             id, date, client, project_name, ee, pl, st, arch, ece, me, solar_electrical, others,
             discipline_fees, purpose, bill, print_cost, total_bill, payment_status, amount_paid,
-            balance, payment_date, payment_method, payment_reference, remarks,
+            balance, payment_date, payment_method, payment_reference, payments, remarks,
             created_at, updated_at
-          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+          ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
           [
             newTx.id, newTx.date || now.split('T')[0], newTx.client, newTx.projectName,
             newTx.ee, newTx.pl, newTx.st, newTx.arch, newTx.ece, newTx.me, newTx.solarElectrical, newTx.others,
             JSON.stringify(newTx.disciplineFees),
             newTx.purpose || '', newTx.bill, newTx.printCost, newTx.totalBill, newTx.paymentStatus, newTx.amountPaid,
-            newTx.balance, newTx.paymentDate || null, newTx.paymentMethod || null, newTx.paymentReference || null, newTx.remarks || null,
+            newTx.balance, newTx.paymentDate || null, newTx.paymentMethod || null, newTx.paymentReference || null,
+            JSON.stringify(newTx.payments), newTx.remarks || null,
             now, now
           ]
         );
@@ -569,17 +664,52 @@ class Database {
       ? Number(feePrinting.toFixed(2))
       : (updateData.printCost !== undefined ? toSafeNonNegativeAmount(updateData.printCost) : current.printCost);
     const totalBill = Number((bill + printCost).toFixed(2));
-    const amountPaid = updateData.amountPaid !== undefined ? toSafeNonNegativeAmount(updateData.amountPaid) : current.amountPaid;
-    const balance = Math.max(0, Number((totalBill - amountPaid).toFixed(2)));
-    
-    let paymentStatus = updateData.paymentStatus || current.paymentStatus;
-    if (amountPaid >= totalBill && totalBill > 0) {
-      paymentStatus = 'Paid';
-    } else if (amountPaid > 0 && amountPaid < totalBill) {
-      paymentStatus = 'Partially Paid';
-    }
 
     const now = new Date().toISOString();
+    const hasPaymentsInUpdate = Array.isArray(updateData.payments);
+    let payments = hasPaymentsInUpdate
+      ? sanitizePayments(updateData.payments)
+      : sanitizePayments(current.payments);
+
+    let amountPaid;
+    let balance;
+    let paymentStatus;
+    let paymentDate;
+    let paymentMethod;
+    let paymentReference;
+
+    if (hasPaymentsInUpdate) {
+      const summary = summarizePayments(totalBill, payments, updateData.paymentStatus || current.paymentStatus);
+      amountPaid = summary.amountPaid;
+      balance = summary.balance;
+      paymentStatus = summary.paymentStatus;
+      paymentDate = summary.paymentDate;
+      paymentMethod = summary.paymentMethod;
+      paymentReference = summary.paymentReference;
+    } else if (payments.length > 0 && updateData.amountPaid === undefined) {
+      const summary = summarizePayments(totalBill, payments, updateData.paymentStatus || current.paymentStatus);
+      amountPaid = summary.amountPaid;
+      balance = summary.balance;
+      paymentStatus = summary.paymentStatus;
+      paymentDate = updateData.paymentDate !== undefined ? updateData.paymentDate : summary.paymentDate;
+      paymentMethod = updateData.paymentMethod !== undefined ? updateData.paymentMethod : summary.paymentMethod;
+      paymentReference = updateData.paymentReference !== undefined ? updateData.paymentReference : summary.paymentReference;
+    } else {
+      amountPaid = updateData.amountPaid !== undefined ? toSafeNonNegativeAmount(updateData.amountPaid) : current.amountPaid;
+      balance = Math.max(0, Number((totalBill - amountPaid).toFixed(2)));
+      paymentStatus = updateData.paymentStatus || current.paymentStatus;
+      if (amountPaid >= totalBill && totalBill > 0) {
+        paymentStatus = 'Paid';
+      } else if (amountPaid > 0 && amountPaid < totalBill) {
+        paymentStatus = paymentStatus === 'Overdue' ? 'Overdue' : 'Partially Paid';
+      } else if (amountPaid === 0) {
+        paymentStatus = paymentStatus === 'Overdue' ? 'Overdue' : 'Pending';
+      }
+      paymentDate = updateData.paymentDate !== undefined ? updateData.paymentDate : current.paymentDate;
+      paymentMethod = updateData.paymentMethod !== undefined ? updateData.paymentMethod : current.paymentMethod;
+      paymentReference = updateData.paymentReference !== undefined ? updateData.paymentReference : current.paymentReference;
+    }
+
     const updated = {
       ...current,
       ...updateData,
@@ -588,12 +718,16 @@ class Database {
         ? String(updateData.solarElectrical || '').trim()
         : (current.solarElectrical || ''),
       disciplineFees,
+      payments,
       bill,
       printCost,
       totalBill,
       amountPaid,
       balance,
       paymentStatus,
+      paymentDate: paymentDate || '',
+      paymentMethod: paymentMethod || '',
+      paymentReference: paymentReference || '',
       updatedAt: now
     };
 
@@ -605,15 +739,15 @@ class Database {
             arch = $7, ece = $8, me = $9, solar_electrical = $10, others = $11, discipline_fees = $12,
             purpose = $13, bill = $14, print_cost = $15, total_bill = $16, payment_status = $17,
             amount_paid = $18, balance = $19, payment_date = $20, payment_method = $21,
-            payment_reference = $22, remarks = $23, updated_at = $24
-          WHERE id = $25`,
+            payment_reference = $22, payments = $23, remarks = $24, updated_at = $25
+          WHERE id = $26`,
           [
             updated.date, updated.client, updated.projectName, updated.ee, updated.pl, updated.st,
             updated.arch, updated.ece, updated.me, updated.solarElectrical, updated.others,
             JSON.stringify(updated.disciplineFees), updated.purpose, updated.bill,
             updated.printCost, updated.totalBill, updated.paymentStatus, updated.amountPaid,
             updated.balance, updated.paymentDate || null, updated.paymentMethod || null, updated.paymentReference || null,
-            updated.remarks || null, now, id
+            JSON.stringify(updated.payments), updated.remarks || null, now, id
           ]
         );
       } catch (err) {
@@ -650,27 +784,59 @@ class Database {
     const current = await this.getTransactionById(id);
     if (!current) return null;
 
-    const newPaymentAmount = Number(paymentData.amountPaid) || 0;
-    const totalPaid = current.amountPaid + newPaymentAmount;
-    const balance = Math.max(0, current.totalBill - totalPaid);
-    
-    let paymentStatus = 'Partially Paid';
-    if (balance === 0 && current.totalBill > 0) {
-      paymentStatus = 'Paid';
-    } else if (totalPaid === 0) {
-      paymentStatus = 'Pending';
-    }
+    const newPaymentAmount = toSafeNonNegativeAmount(paymentData.amountPaid ?? paymentData.amount);
+    if (newPaymentAmount <= 0) return null;
 
     const now = new Date().toISOString();
+    let existingPayments = sanitizePayments(current.payments);
+
+    // Preserve any legacy lump-sum amountPaid as the first recorded payment before appending
+    if (existingPayments.length === 0 && (Number(current.amountPaid) || 0) > 0) {
+      existingPayments.push({
+        id: `PAY-LEGACY-${current.id}`,
+        amount: toSafeNonNegativeAmount(current.amountPaid),
+        date: current.paymentDate || current.date || now.split('T')[0],
+        method: current.paymentMethod || 'Bank Transfer',
+        reference: current.paymentReference || '',
+        remarks: 'Previous recorded payment',
+        recordedAt: current.updatedAt || current.createdAt || now
+      });
+    }
+
+    const newEntry = {
+      id: typeof paymentData.id === 'string' && paymentData.id.trim()
+        ? paymentData.id.trim().slice(0, 80)
+        : `PAY-${Date.now()}-${existingPayments.length + 1}`,
+      amount: newPaymentAmount,
+      date: typeof paymentData.paymentDate === 'string' && paymentData.paymentDate.trim()
+        ? paymentData.paymentDate.trim().slice(0, 30)
+        : (typeof paymentData.date === 'string' && paymentData.date.trim()
+            ? paymentData.date.trim().slice(0, 30)
+            : now.split('T')[0]),
+      method: typeof paymentData.paymentMethod === 'string' && paymentData.paymentMethod.trim()
+        ? paymentData.paymentMethod.trim().slice(0, 80)
+        : (typeof paymentData.method === 'string' && paymentData.method.trim()
+            ? paymentData.method.trim().slice(0, 80)
+            : 'Bank Transfer'),
+      reference: typeof paymentData.paymentReference === 'string'
+        ? paymentData.paymentReference.trim().slice(0, 120)
+        : (typeof paymentData.reference === 'string' ? paymentData.reference.trim().slice(0, 120) : ''),
+      remarks: typeof paymentData.remarks === 'string' ? paymentData.remarks.trim().slice(0, 500) : '',
+      recordedAt: now
+    };
+
+    const nextPayments = [...existingPayments, newEntry];
+    const summary = summarizePayments(current.totalBill, nextPayments, current.paymentStatus);
+
     const updated = {
       ...current,
-      amountPaid: totalPaid,
-      balance,
-      paymentStatus,
-      paymentDate: paymentData.paymentDate || now.split('T')[0],
-      paymentMethod: paymentData.paymentMethod || current.paymentMethod || 'Bank Transfer',
-      paymentReference: paymentData.paymentReference || current.paymentReference || '',
-      remarks: paymentData.remarks ? `${current.remarks ? current.remarks + ' | ' : ''}${paymentData.remarks}` : current.remarks,
+      payments: nextPayments,
+      amountPaid: summary.amountPaid,
+      balance: summary.balance,
+      paymentStatus: summary.paymentStatus,
+      paymentDate: summary.paymentDate,
+      paymentMethod: summary.paymentMethod,
+      paymentReference: summary.paymentReference,
       updatedAt: now
     };
 
@@ -679,15 +845,63 @@ class Database {
         await this.pool.query(
           `UPDATE transactions SET
             amount_paid = $1, balance = $2, payment_status = $3, payment_date = $4,
-            payment_method = $5, payment_reference = $6, remarks = $7, updated_at = $8
+            payment_method = $5, payment_reference = $6, payments = $7, updated_at = $8
           WHERE id = $9`,
           [
-            updated.amountPaid, updated.balance, updated.paymentStatus, updated.paymentDate,
-            updated.paymentMethod, updated.paymentReference, updated.remarks, now, id
+            updated.amountPaid, updated.balance, updated.paymentStatus, updated.paymentDate || null,
+            updated.paymentMethod || null, updated.paymentReference || null,
+            JSON.stringify(updated.payments), now, id
           ]
         );
       } catch (err) {
         console.error('PostgreSQL recordPayment error:', err.message);
+      }
+    }
+
+    const idx = this.data.transactions.findIndex(t => t.id === id);
+    if (idx !== -1) {
+      this.data.transactions[idx] = updated;
+    }
+    this.saveToFile();
+    return updated;
+  }
+
+  async deletePayment(id, paymentId) {
+    const current = await this.getTransactionById(id);
+    if (!current) return null;
+
+    const existingPayments = sanitizePayments(current.payments);
+    const nextPayments = existingPayments.filter(p => p.id !== paymentId);
+    const summary = summarizePayments(current.totalBill, nextPayments, current.paymentStatus);
+    const now = new Date().toISOString();
+
+    const updated = {
+      ...current,
+      payments: nextPayments,
+      amountPaid: summary.amountPaid,
+      balance: summary.balance,
+      paymentStatus: summary.paymentStatus,
+      paymentDate: summary.paymentDate,
+      paymentMethod: summary.paymentMethod,
+      paymentReference: summary.paymentReference,
+      updatedAt: now
+    };
+
+    if (this.isPostgresConnected && this.pool) {
+      try {
+        await this.pool.query(
+          `UPDATE transactions SET
+            amount_paid = $1, balance = $2, payment_status = $3, payment_date = $4,
+            payment_method = $5, payment_reference = $6, payments = $7, updated_at = $8
+          WHERE id = $9`,
+          [
+            updated.amountPaid, updated.balance, updated.paymentStatus, updated.paymentDate || null,
+            updated.paymentMethod || null, updated.paymentReference || null,
+            JSON.stringify(updated.payments), now, id
+          ]
+        );
+      } catch (err) {
+        console.error('PostgreSQL deletePayment error:', err.message);
       }
     }
 
@@ -1035,14 +1249,15 @@ class Database {
               `INSERT INTO transactions (
                 id, date, client, project_name, ee, pl, st, arch, ece, me, solar_electrical, others,
                 discipline_fees, purpose, bill, print_cost, total_bill, payment_status, amount_paid,
-                balance, payment_date, payment_method, payment_reference, remarks,
+                balance, payment_date, payment_method, payment_reference, payments, remarks,
                 created_at, updated_at
-              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
               [
                 t.id, t.date, t.client, t.projectName, t.ee || '', t.pl || '', t.st || '', t.arch || '', t.ece || '', t.me || '', t.solarElectrical || '', t.others || '',
                 JSON.stringify(sanitizeDisciplineFees(t.disciplineFees)),
                 t.purpose || '', t.bill || 0, t.printCost || 0, t.totalBill || 0, t.paymentStatus || 'Pending', t.amountPaid || 0,
-                t.balance || 0, t.paymentDate || null, t.paymentMethod || null, t.paymentReference || null, t.remarks || null,
+                t.balance || 0, t.paymentDate || null, t.paymentMethod || null, t.paymentReference || null,
+                JSON.stringify(sanitizePayments(t.payments)), t.remarks || null,
                 t.createdAt || new Date().toISOString(), t.updatedAt || new Date().toISOString()
               ]
             );
@@ -1113,14 +1328,15 @@ class Database {
               `INSERT INTO transactions (
                 id, date, client, project_name, ee, pl, st, arch, ece, me, solar_electrical, others,
                 discipline_fees, purpose, bill, print_cost, total_bill, payment_status, amount_paid,
-                balance, payment_date, payment_method, payment_reference, remarks,
+                balance, payment_date, payment_method, payment_reference, payments, remarks,
                 created_at, updated_at
-              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26)`,
+              ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27)`,
               [
                 t.id, t.date, t.client, t.projectName, t.ee, t.pl, t.st, t.arch, t.ece, t.me, t.solarElectrical || '', t.others,
                 JSON.stringify(sanitizeDisciplineFees(t.disciplineFees)),
                 t.purpose, t.bill, t.printCost, t.totalBill, t.paymentStatus, t.amountPaid,
-                t.balance, t.paymentDate || null, t.paymentMethod || null, t.paymentReference || null, t.remarks || null,
+                t.balance, t.paymentDate || null, t.paymentMethod || null, t.paymentReference || null,
+                JSON.stringify(sanitizePayments(t.payments)), t.remarks || null,
                 t.createdAt, t.updatedAt
               ]
             );
